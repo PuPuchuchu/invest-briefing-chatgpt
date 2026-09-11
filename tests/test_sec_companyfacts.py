@@ -5,7 +5,7 @@ from pathlib import Path
 from urllib.request import Request, urlopen
 
 
-USER_AGENT = "stock-master-sec-test/0.1 chks7788@gmail.com"
+USER_AGENT = "invest-briefing-chatgpt/0.1 chks7788@gmail.com"
 
 TICKERS = {
     "MSFT": "0000789019",
