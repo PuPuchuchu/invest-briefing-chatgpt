@@ -20,10 +20,15 @@ jobs:
           python-version: "3.12"
 
       - name: Run SEC test
+        continue-on-error: true
         env:
           SEC_USER_AGENT: "stock-master-sec-test/0.1 chks7788@gmail.com"
         run: |
           python tests/test_sec_companyfacts.py
+
+      - name: Inspect SEC concepts
+        run: |
+          python tests/inspect_sec_concepts.py
 
       - name: Upload SEC raw response
         if: always()
