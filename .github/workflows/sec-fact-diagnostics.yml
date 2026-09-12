@@ -1,0 +1,25 @@
+name: SEC Fact Diagnostics
+
+on:
+  workflow_dispatch:
+
+jobs:
+  diagnostics:
+
+    runs-on: ubuntu-latest
+
+    steps:
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Run SEC fact diagnostics
+        env:
+          SEC_USER_AGENT: "stock-master-sec-test/0.1 chks7788@gmail.com"
+        run: |
+          python tests/test_sec_fact_diagnostics.py
