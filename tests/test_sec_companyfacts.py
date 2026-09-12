@@ -6,15 +6,35 @@ from urllib.request import Request, urlopen
 from datetime import datetime, timezone
 
 
+# ============================================================
+# CONFIGURATION
+# ============================================================
+
 USER_AGENT = "invest-briefing-chatgpt/0.1 chks7788@gmail.com"
 
 TICKERS = {
-    "MSFT": "0000789019",
-    "NVDA": "0001045810",
-    "JPM": "0000019617",
-    "LLY": "0000059478",
-    "PLTR": "0001321655",
+    "MSFT": {
+        "cik": "0000789019",
+        "company_type": "NON_FINANCIAL",
+    },
+    "NVDA": {
+        "cik": "0001045810",
+        "company_type": "NON_FINANCIAL",
+    },
+    "JPM": {
+        "cik": "0000019617",
+        "company_type": "FINANCIAL",
+    },
+    "LLY": {
+        "cik": "0000059478",
+        "company_type": "NON_FINANCIAL",
+    },
+    "PLTR": {
+        "cik": "0001321655",
+        "company_type": "NON_FINANCIAL",
+    },
 }
+
 
 RAW_DIR = Path("data/raw/sec")
 PROCESSED_DIR = Path("data/processed/fundamentals")
@@ -50,29 +70,38 @@ def fetch_json(url: str) -> dict:
         raw_data = response.read()
 
         print(f"HTTP status: {status}")
+
         print(
             f"Content-Encoding: "
             f"{content_encoding or 'none'}"
         )
+
         print(
             f"Response bytes: "
             f"{len(raw_data)}"
         )
 
         if status != 200:
+
             raise RuntimeError(
                 f"HTTP status: {status}"
             )
 
         if content_encoding == "gzip":
 
-            raw_data = gzip.decompress(raw_data)
+            raw_data = gzip.decompress(
+                raw_data
+            )
 
         elif content_encoding == "deflate":
 
-            raw_data = zlib.decompress(raw_data)
+            raw_data = zlib.decompress(
+                raw_data
+            )
 
-        text = raw_data.decode("utf-8")
+        text = raw_data.decode(
+            "utf-8"
+        )
 
         return json.loads(text)
 
@@ -97,7 +126,10 @@ def validate_companyfacts(data: dict) -> None:
                 f"Missing required key: {key}"
             )
 
-    if not isinstance(data["facts"], dict):
+    if not isinstance(
+        data["facts"],
+        dict
+    ):
 
         raise ValueError(
             "facts is not a dictionary"
@@ -105,7 +137,7 @@ def validate_companyfacts(data: dict) -> None:
 
 
 # ============================================================
-# HELPERS
+# SEC FACT HELPERS
 # ============================================================
 
 def get_all_concepts(data: dict):
@@ -114,7 +146,10 @@ def get_all_concepts(data: dict):
 
     for namespace, namespace_data in data["facts"].items():
 
-        if not isinstance(namespace_data, dict):
+        if not isinstance(
+            namespace_data,
+            dict
+        ):
             continue
 
         for concept_name, concept_data in namespace_data.items():
@@ -130,261 +165,427 @@ def get_all_concepts(data: dict):
     return concepts
 
 
-def get_observations(concept_data: dict):
+def get_observations(
+    concept_data: dict
+):
 
-    units = concept_data.get("units", {})
+    units = concept_data.get(
+        "units",
+        {}
+    )
 
     observations = []
 
     for unit, values in units.items():
 
-        if not isinstance(values, list):
+        if not isinstance(
+            values,
+            list
+        ):
             continue
 
         for obs in values:
 
             row = dict(obs)
+
             row["unit"] = unit
 
-            observations.append(row)
+            observations.append(
+                row
+            )
 
     return observations
 
 
-def is_recent_observation(obs: dict) -> bool:
+# ============================================================
+# OBSERVATION CLASSIFICATION
+# ============================================================
 
-    return bool(
-        obs.get("filed")
-        or obs.get("end")
+def is_instant_observation(
+    obs: dict
+) -> bool:
+
+    return (
+        "end" in obs
+        and "start" not in obs
     )
 
 
-def get_latest_observation(concept_data: dict):
+def is_duration_observation(
+    obs: dict
+) -> bool:
 
-    observations = get_observations(concept_data)
+    return (
+        "start" in obs
+        and "end" in obs
+    )
 
-    valid = [
+
+def is_annual_observation(
+    obs: dict
+) -> bool:
+
+    if obs.get("form") != "10-K":
+        return False
+
+    if obs.get("fp") != "FY":
+        return False
+
+    return is_duration_observation(
         obs
-        for obs in observations
-        if is_recent_observation(obs)
-    ]
+    )
 
-    if not valid:
-        return None
 
-    valid.sort(
+# ============================================================
+# OBSERVATION SELECTION
+# ============================================================
+
+def sort_observations(
+    observations
+):
+
+    return sorted(
+        observations,
         key=lambda x: (
             x.get("filed", ""),
             x.get("end", ""),
             x.get("start", ""),
+            x.get("accn", ""),
         ),
         reverse=True,
     )
 
-    return valid[0]
-
-
-# ============================================================
-# CONCEPT SEARCH / RANKING
-# ============================================================
-
-def concept_matches(concept_name: str, keywords):
-
-    name = concept_name.lower()
-
-    return all(
-        keyword.lower() in name
-        for keyword in keywords
-    )
-
-
-def find_candidate_concepts(
-    data: dict,
-    keywords,
-    namespaces=("us-gaap",),
-    limit=10,
-):
-
-    candidates = []
-
-    for item in get_all_concepts(data):
-
-        if item["namespace"] not in namespaces:
-            continue
-
-        concept_name = item["concept"]
-
-        if not concept_matches(
-            concept_name,
-            keywords,
-        ):
-            continue
-
-        latest = get_latest_observation(
-            item["data"]
-        )
-
-        if latest is None:
-            continue
-
-        candidates.append(
-            {
-                "namespace": item["namespace"],
-                "concept": concept_name,
-                "latest": latest,
-            }
-        )
-
-    candidates.sort(
-        key=lambda x: (
-            x["latest"].get("filed", ""),
-            x["latest"].get("end", ""),
-        ),
-        reverse=True,
-    )
-
-    return candidates[:limit]
-
-
-def print_candidates(
-    data: dict,
-    metric_name: str,
-    keywords,
-    namespaces=("us-gaap",),
-):
-
-    print()
-    print(
-        f"=== Concept candidates: {metric_name} ==="
-    )
-
-    candidates = find_candidate_concepts(
-        data,
-        keywords,
-        namespaces,
-    )
-
-    if not candidates:
-
-        print("[WARN] No candidates found")
-        return candidates
-
-    for candidate in candidates:
-
-        latest = candidate["latest"]
-
-        print(
-            f"- {candidate['namespace']}:"
-            f"{candidate['concept']}"
-        )
-
-        print(
-            f"  latest end="
-            f"{latest.get('end')}"
-            f", filed="
-            f"{latest.get('filed')}"
-            f", form="
-            f"{latest.get('form')}"
-            f", fp="
-            f"{latest.get('fp')}"
-            f", value="
-            f"{latest.get('val')}"
-        )
-
-    return candidates
-
-
-# ============================================================
-# EXTRACT LATEST FY OBSERVATION
-# ============================================================
 
 def select_latest_annual_observation(
-    concept_data: dict,
+    concept_data: dict
 ):
 
     observations = get_observations(
         concept_data
     )
 
-    annual = []
-
-    for obs in observations:
-
-        form = obs.get("form")
-        fp = obs.get("fp")
-
-        if form != "10-K":
-            continue
-
-        if fp != "FY":
-            continue
-
-        if "start" not in obs:
-            continue
-
-        annual.append(obs)
+    annual = [
+        obs
+        for obs in observations
+        if is_annual_observation(obs)
+    ]
 
     if not annual:
         return None
 
-    annual.sort(
-        key=lambda x: (
-            x.get("filed", ""),
-            x.get("end", ""),
-        ),
-        reverse=True,
+    annual = sort_observations(
+        annual
     )
 
     return annual[0]
 
 
-def find_best_annual_concept(
-    data: dict,
-    concept_names,
-    namespaces=("us-gaap",),
+def select_latest_instant_observation(
+    concept_data: dict
 ):
 
-    candidates = []
-
-    for item in get_all_concepts(data):
-
-        if item["namespace"] not in namespaces:
-            continue
-
-        if item["concept"] not in concept_names:
-            continue
-
-        latest = select_latest_annual_observation(
-            item["data"]
-        )
-
-        if latest is None:
-            continue
-
-        candidates.append(
-            {
-                "namespace": item["namespace"],
-                "concept": item["concept"],
-                "observation": latest,
-            }
-        )
-
-    if not candidates:
-        return None
-
-    candidates.sort(
-        key=lambda x: (
-            x["observation"].get("filed", ""),
-            x["observation"].get("end", ""),
-        ),
-        reverse=True,
+    observations = get_observations(
+        concept_data
     )
 
-    return candidates[0]
+    instant = [
+        obs
+        for obs in observations
+        if is_instant_observation(obs)
+    ]
+
+    if not instant:
+        return None
+
+    instant = sort_observations(
+        instant
+    )
+
+    return instant[0]
 
 
 # ============================================================
-# METRIC EXTRACTION
+# CONCEPT LOOKUP
+# ============================================================
+
+def find_concept(
+    data: dict,
+    namespace: str,
+    concept_name: str,
+):
+
+    for item in get_all_concepts(data):
+
+        if item["namespace"] != namespace:
+            continue
+
+        if item["concept"] != concept_name:
+            continue
+
+        return item["data"]
+
+    return None
+
+
+# ============================================================
+# PRIORITY-BASED ANNUAL CONCEPT SELECTION
+# ============================================================
+
+def find_best_annual_concept(
+    data: dict,
+    concept_candidates,
+    namespaces=("us-gaap",),
+):
+
+    """
+    Concept 후보를 경제적 의미의 우선순위대로 검사한다.
+
+    중요한 원칙:
+    '가장 최근 filing을 가진 Concept'를 무조건 선택하지 않는다.
+
+    예:
+        OperatingIncomeLoss
+        vs
+        NonoperatingIncomeExpense
+
+    후자가 더 최근 filing을 가지고 있어도
+    operating_income으로 선택하면 안 된다.
+
+    따라서 concept_candidates의 순서를
+    경제적 의미의 우선순위로 사용한다.
+    """
+
+    for concept_name in concept_candidates:
+
+        for namespace in namespaces:
+
+            concept_data = find_concept(
+                data,
+                namespace,
+                concept_name,
+            )
+
+            if concept_data is None:
+                continue
+
+            observation = (
+                select_latest_annual_observation(
+                    concept_data
+                )
+            )
+
+            if observation is None:
+                continue
+
+            return {
+                "namespace": namespace,
+                "concept": concept_name,
+                "observation": observation,
+            }
+
+    return None
+
+
+# ============================================================
+# PRIORITY-BASED INSTANT CONCEPT SELECTION
+# ============================================================
+
+def find_best_instant_concept(
+    data: dict,
+    concept_candidates,
+    namespaces=("us-gaap", "dei"),
+):
+
+    """
+    Instant metric도 Concept 우선순위를 따른다.
+
+    예:
+        shares_outstanding
+
+        1. dei:EntityCommonStockSharesOutstanding
+        2. us-gaap:CommonStockSharesOutstanding
+
+    WeightedAverageNumberOfDilutedSharesOutstanding는
+    현재 시점 shares outstanding의 후보로 사용하지 않는다.
+    """
+
+    for concept_name in concept_candidates:
+
+        for namespace in namespaces:
+
+            concept_data = find_concept(
+                data,
+                namespace,
+                concept_name,
+            )
+
+            if concept_data is None:
+                continue
+
+            observation = (
+                select_latest_instant_observation(
+                    concept_data
+                )
+            )
+
+            if observation is None:
+                continue
+
+            return {
+                "namespace": namespace,
+                "concept": concept_name,
+                "observation": observation,
+            }
+
+    return None
+
+
+# ============================================================
+# NORMALIZED RESULT BUILDERS
+# ============================================================
+
+def build_missing_metric(
+    metric_name: str,
+    reason: str = None,
+):
+
+    result = {
+        "metric": metric_name,
+        "status": "MISSING",
+        "value": None,
+    }
+
+    if reason:
+        result["reason"] = reason
+
+    return result
+
+
+def build_not_applicable_metric(
+    metric_name: str,
+    reason: str,
+):
+
+    return {
+        "metric": metric_name,
+        "status": "NOT_APPLICABLE",
+        "value": None,
+        "reason": reason,
+    }
+
+
+def build_metric_result(
+    metric_name: str,
+    namespace: str,
+    concept: str,
+    observation: dict,
+):
+
+    return {
+        "metric": metric_name,
+        "status": "OK",
+
+        "namespace": namespace,
+
+        "concept": concept,
+
+        "unit": observation.get(
+            "unit"
+        ),
+
+        "value": observation.get(
+            "val"
+        ),
+
+        "period_start": observation.get(
+            "start"
+        ),
+
+        "period_end": observation.get(
+            "end"
+        ),
+
+        "filing_date": observation.get(
+            "filed"
+        ),
+
+        "form": observation.get(
+            "form"
+        ),
+
+        "fy": observation.get(
+            "fy"
+        ),
+
+        "fp": observation.get(
+            "fp"
+        ),
+
+        "frame": observation.get(
+            "frame"
+        ),
+
+        "accession": observation.get(
+            "accn"
+        ),
+    }
+
+
+def build_instant_result(
+    metric_name: str,
+    namespace: str,
+    concept: str,
+    observation: dict,
+):
+
+    return {
+        "metric": metric_name,
+        "status": "OK",
+
+        "namespace": namespace,
+
+        "concept": concept,
+
+        "unit": observation.get(
+            "unit"
+        ),
+
+        "value": observation.get(
+            "val"
+        ),
+
+        "period_end": observation.get(
+            "end"
+        ),
+
+        "filing_date": observation.get(
+            "filed"
+        ),
+
+        "form": observation.get(
+            "form"
+        ),
+
+        "fy": observation.get(
+            "fy"
+        ),
+
+        "fp": observation.get(
+            "fp"
+        ),
+
+        "frame": observation.get(
+            "frame"
+        ),
+
+        "accession": observation.get(
+            "accn"
+        ),
+    }
+
+
+# ============================================================
+# ANNUAL METRIC EXTRACTION
 # ============================================================
 
 def extract_metric(
@@ -392,7 +593,6 @@ def extract_metric(
     metric_name: str,
     concept_candidates,
     namespaces=("us-gaap",),
-    annual=True,
 ):
 
     result = find_best_annual_concept(
@@ -408,114 +608,25 @@ def extract_metric(
             f"no valid annual concept found"
         )
 
-        return {
-            "metric": metric_name,
-            "status": "MISSING",
-            "value": None,
-        }
+        return build_missing_metric(
+            metric_name
+        )
 
-    obs = result["observation"]
+    observation = result[
+        "observation"
+    ]
 
-    return {
-        "metric": metric_name,
-        "status": "OK",
-        "namespace": result["namespace"],
-        "concept": result["concept"],
-        "unit": obs.get("unit"),
-        "value": obs.get("val"),
-        "period_start": obs.get("start"),
-        "period_end": obs.get("end"),
-        "filing_date": obs.get("filed"),
-        "form": obs.get("form"),
-        "fy": obs.get("fy"),
-        "fp": obs.get("fp"),
-        "frame": obs.get("frame"),
-        "accession": obs.get("accn"),
-    }
+    return build_metric_result(
+        metric_name,
+        result["namespace"],
+        result["concept"],
+        observation,
+    )
 
 
 # ============================================================
-# INSTANT FACT EXTRACTION
+# INSTANT METRIC EXTRACTION
 # ============================================================
-
-def select_latest_instant_observation(
-    concept_data: dict,
-):
-
-    observations = get_observations(
-        concept_data
-    )
-
-    instant = []
-
-    for obs in observations:
-
-        if "end" not in obs:
-            continue
-
-        if "start" in obs:
-            continue
-
-        instant.append(obs)
-
-    if not instant:
-        return None
-
-    instant.sort(
-        key=lambda x: (
-            x.get("filed", ""),
-            x.get("end", ""),
-        ),
-        reverse=True,
-    )
-
-    return instant[0]
-
-
-def find_best_instant_concept(
-    data: dict,
-    concept_names,
-    namespaces=("us-gaap", "dei"),
-):
-
-    candidates = []
-
-    for item in get_all_concepts(data):
-
-        if item["namespace"] not in namespaces:
-            continue
-
-        if item["concept"] not in concept_names:
-            continue
-
-        latest = select_latest_instant_observation(
-            item["data"]
-        )
-
-        if latest is None:
-            continue
-
-        candidates.append(
-            {
-                "namespace": item["namespace"],
-                "concept": item["concept"],
-                "observation": latest,
-            }
-        )
-
-    if not candidates:
-        return None
-
-    candidates.sort(
-        key=lambda x: (
-            x["observation"].get("filed", ""),
-            x["observation"].get("end", ""),
-        ),
-        reverse=True,
-    )
-
-    return candidates[0]
-
 
 def extract_instant_metric(
     data: dict,
@@ -537,29 +648,20 @@ def extract_instant_metric(
             f"no valid instant concept found"
         )
 
-        return {
-            "metric": metric_name,
-            "status": "MISSING",
-            "value": None,
-        }
+        return build_missing_metric(
+            metric_name
+        )
 
-    obs = result["observation"]
+    observation = result[
+        "observation"
+    ]
 
-    return {
-        "metric": metric_name,
-        "status": "OK",
-        "namespace": result["namespace"],
-        "concept": result["concept"],
-        "unit": obs.get("unit"),
-        "value": obs.get("val"),
-        "period_end": obs.get("end"),
-        "filing_date": obs.get("filed"),
-        "form": obs.get("form"),
-        "fy": obs.get("fy"),
-        "fp": obs.get("fp"),
-        "frame": obs.get("frame"),
-        "accession": obs.get("accn"),
-    }
+    return build_instant_result(
+        metric_name,
+        result["namespace"],
+        result["concept"],
+        observation,
+    )
 
 
 # ============================================================
@@ -569,170 +671,304 @@ def extract_instant_metric(
 def normalize_company(
     ticker: str,
     data: dict,
+    company_type: str,
 ):
 
     print()
     print("=" * 70)
-    print(f"NORMALIZING {ticker}")
+
+    print(
+        f"NORMALIZING {ticker}"
+    )
+
+    print(
+        f"Company type: {company_type}"
+    )
+
     print("=" * 70)
 
-    # --------------------------------------------------------
-    # Revenue
-    # --------------------------------------------------------
+
+    # ========================================================
+    # REVENUE
+    # ========================================================
 
     revenue = extract_metric(
         data,
         "revenue",
+
         [
             "RevenueFromContractWithCustomerExcludingAssessedTax",
-            "Revenues",
             "SalesRevenueNet",
+            "Revenues",
         ],
     )
 
-    # --------------------------------------------------------
-    # Net Income
-    # --------------------------------------------------------
+
+    # ========================================================
+    # NET INCOME
+    # ========================================================
 
     net_income = extract_metric(
         data,
         "net_income",
+
         [
             "NetIncomeLoss",
             "ProfitLoss",
         ],
     )
 
-    # --------------------------------------------------------
-    # EPS
-    # --------------------------------------------------------
+
+    # ========================================================
+    # DILUTED EPS
+    # ========================================================
 
     diluted_eps = extract_metric(
         data,
         "diluted_eps",
+
         [
             "EarningsPerShareDiluted",
         ],
     )
 
-    # --------------------------------------------------------
-    # Operating Income
-    # --------------------------------------------------------
 
-    operating_income = extract_metric(
-        data,
-        "operating_income",
-        [
-            "OperatingIncomeLoss",
-        ],
-    )
+    # ========================================================
+    # OPERATING INCOME
+    # ========================================================
 
-    # --------------------------------------------------------
+    if company_type == "FINANCIAL":
+
+        operating_income = (
+            build_not_applicable_metric(
+                "operating_income",
+                "Generic operating income framework is not used for financial companies.",
+            )
+        )
+
+    else:
+
+        operating_income = extract_metric(
+            data,
+            "operating_income",
+
+            [
+                "OperatingIncomeLoss",
+            ],
+        )
+
+
+    # ========================================================
     # CFO
-    # --------------------------------------------------------
+    # ========================================================
 
-    cfo = extract_metric(
-        data,
-        "cfo",
-        [
-            "NetCashProvidedByUsedInOperatingActivities",
-        ],
-    )
+    if company_type == "FINANCIAL":
 
-    # --------------------------------------------------------
-    # CapEx
-    # --------------------------------------------------------
+        cfo = build_not_applicable_metric(
+            "cfo",
+            "Generic CFO/FCF framework is not used for financial companies.",
+        )
 
-    capex = extract_metric(
-        data,
-        "capex",
-        [
-            "PaymentsToAcquirePropertyPlantAndEquipment",
-        ],
-    )
+    else:
 
-    # --------------------------------------------------------
-    # Cash
-    # --------------------------------------------------------
+        cfo = extract_metric(
+            data,
+            "cfo",
+
+            [
+                "NetCashProvidedByUsedInOperatingActivities",
+            ],
+        )
+
+
+    # ========================================================
+    # CAPEX
+    # ========================================================
+
+    if company_type == "FINANCIAL":
+
+        capex = build_not_applicable_metric(
+            "capex",
+            "Generic CapEx/FCF framework is not used for financial companies.",
+        )
+
+    else:
+
+        capex = extract_metric(
+            data,
+            "capex",
+
+            [
+                "PaymentsToAcquirePropertyPlantAndEquipment",
+                "PaymentsToAcquireOtherPropertyPlantAndEquipment",
+            ],
+        )
+
+
+    # ========================================================
+    # CASH
+    # ========================================================
 
     cash = extract_instant_metric(
         data,
         "cash",
+
         [
             "CashAndCashEquivalentsAtCarryingValue",
         ],
     )
 
-    # --------------------------------------------------------
-    # Debt
-    # --------------------------------------------------------
 
-    current_debt = extract_instant_metric(
-        data,
-        "current_debt",
-        [
-            "LongTermDebtCurrent",
-            "ShortTermBorrowings",
-            "ShortTermDebt",
-        ],
-    )
+    # ========================================================
+    # CURRENT DEBT
+    # ========================================================
 
-    noncurrent_debt = extract_instant_metric(
-        data,
-        "noncurrent_debt",
-        [
-            "LongTermDebtNoncurrent",
-            "LongTermDebt",
-        ],
-    )
+    if company_type == "FINANCIAL":
 
-    # --------------------------------------------------------
-    # Shares
-    # --------------------------------------------------------
-
-    shares = extract_instant_metric(
-        data,
-        "shares_outstanding",
-        [
-            "EntityCommonStockSharesOutstanding",
-        ],
-        namespaces=("dei",),
-    )
-
-    # --------------------------------------------------------
-    # Construct total debt
-    # --------------------------------------------------------
-
-    total_debt = {
-        "metric": "total_debt",
-        "status": "OK",
-        "value": None,
-        "components": {
-            "current_debt": current_debt,
-            "noncurrent_debt": noncurrent_debt,
-        },
-    }
-
-    current_value = current_debt.get("value")
-    noncurrent_value = noncurrent_debt.get("value")
-
-    if (
-        current_debt.get("status") == "OK"
-        and noncurrent_debt.get("status") == "OK"
-    ):
-
-        total_debt["value"] = (
-            current_value +
-            noncurrent_value
+        current_debt = build_not_applicable_metric(
+            "current_debt",
+            "Generic industrial debt framework is not used for financial companies.",
         )
 
     else:
 
-        total_debt["status"] = "INCOMPLETE"
+        current_debt = extract_instant_metric(
+            data,
+            "current_debt",
 
-    # --------------------------------------------------------
-    # Result
-    # --------------------------------------------------------
+            [
+                "LongTermDebtCurrent",
+                "ShortTermBorrowings",
+                "ShortTermDebt",
+                "CurrentDebt",
+            ],
+        )
+
+
+    # ========================================================
+    # NONCURRENT DEBT
+    # ========================================================
+
+    if company_type == "FINANCIAL":
+
+        noncurrent_debt = build_not_applicable_metric(
+            "noncurrent_debt",
+            "Generic industrial debt framework is not used for financial companies.",
+        )
+
+    else:
+
+        noncurrent_debt = extract_instant_metric(
+            data,
+            "noncurrent_debt",
+
+            [
+                "LongTermDebtNoncurrent",
+            ],
+        )
+
+
+    # ========================================================
+    # SHARES OUTSTANDING
+    # ========================================================
+
+    shares = extract_instant_metric(
+        data,
+        "shares_outstanding",
+
+        [
+            "EntityCommonStockSharesOutstanding",
+            "CommonStockSharesOutstanding",
+        ],
+
+        namespaces=(
+            "dei",
+            "us-gaap",
+        ),
+    )
+
+
+    # ========================================================
+    # TOTAL DEBT
+    # ========================================================
+
+    if company_type == "FINANCIAL":
+
+        total_debt = {
+            "metric": "total_debt",
+
+            "status": "NOT_APPLICABLE",
+
+            "value": None,
+
+            "reason": (
+                "Generic EV debt calculation is not "
+                "appropriate for financial companies."
+            ),
+
+            "components": {
+                "current_debt": current_debt,
+                "noncurrent_debt": noncurrent_debt,
+            },
+        }
+
+    else:
+
+        total_debt = {
+            "metric": "total_debt",
+
+            "status": "INCOMPLETE",
+
+            "value": None,
+
+            "components": {
+                "current_debt": current_debt,
+                "noncurrent_debt": noncurrent_debt,
+            },
+        }
+
+        current_value = (
+            current_debt.get("value")
+        )
+
+        noncurrent_value = (
+            noncurrent_debt.get("value")
+        )
+
+        if (
+            current_debt.get("status") == "OK"
+            and
+            noncurrent_debt.get("status") == "OK"
+            and
+            isinstance(
+                current_value,
+                (int, float)
+            )
+            and
+            isinstance(
+                noncurrent_value,
+                (int, float)
+            )
+        ):
+
+            total_debt["value"] = (
+                current_value
+                +
+                noncurrent_value
+            )
+
+            total_debt["status"] = "OK"
+
+        else:
+
+            total_debt["status"] = (
+                "INCOMPLETE"
+            )
+
+
+    # ========================================================
+    # RESULT
+    # ========================================================
 
     normalized = {
 
@@ -742,7 +978,11 @@ def normalize_company(
             "entityName"
         ),
 
-        "cik": data.get("cik"),
+        "cik": data.get(
+            "cik"
+        ),
+
+        "company_type": company_type,
 
         "retrieved_at": datetime.now(
             timezone.utc
@@ -756,7 +996,8 @@ def normalize_company(
 
             "diluted_eps": diluted_eps,
 
-            "operating_income": operating_income,
+            "operating_income":
+                operating_income,
 
             "cfo": cfo,
 
@@ -764,13 +1005,17 @@ def normalize_company(
 
             "cash": cash,
 
-            "current_debt": current_debt,
+            "current_debt":
+                current_debt,
 
-            "noncurrent_debt": noncurrent_debt,
+            "noncurrent_debt":
+                noncurrent_debt,
 
-            "total_debt": total_debt,
+            "total_debt":
+                total_debt,
 
-            "shares_outstanding": shares,
+            "shares_outstanding":
+                shares,
         },
     }
 
@@ -785,17 +1030,12 @@ def validate_normalized_data(
     normalized: dict,
 ):
 
-    ticker = normalized["ticker"]
+    ticker = normalized[
+        "ticker"
+    ]
 
-    required_metrics = [
-        "revenue",
-        "net_income",
-        "diluted_eps",
-        "operating_income",
-        "cfo",
-        "capex",
-        "cash",
-        "shares_outstanding",
+    company_type = normalized[
+        "company_type"
     ]
 
     print()
@@ -803,19 +1043,73 @@ def validate_normalized_data(
         f"=== Validation: {ticker} ==="
     )
 
+    print(
+        f"Company type: {company_type}"
+    )
+
     failures = []
+
+
+    # ========================================================
+    # CORE METRICS
+    # ========================================================
+
+    if company_type == "NON_FINANCIAL":
+
+        required_metrics = [
+
+            "revenue",
+
+            "net_income",
+
+            "diluted_eps",
+
+            "operating_income",
+
+            "cfo",
+
+            "capex",
+
+            "cash",
+
+            "shares_outstanding",
+        ]
+
+    else:
+
+        required_metrics = [
+
+            "revenue",
+
+            "net_income",
+
+            "diluted_eps",
+
+            "cash",
+
+            "shares_outstanding",
+        ]
+
+
+    # ========================================================
+    # VALIDATE CORE
+    # ========================================================
 
     for metric in required_metrics:
 
-        data = normalized["metrics"][metric]
+        metric_data = (
+            normalized["metrics"][metric]
+        )
 
-        status = data.get("status")
+        status = metric_data.get(
+            "status"
+        )
 
         if status == "OK":
 
             print(
                 f"[PASS] {metric}: "
-                f"{data.get('value')}"
+                f"{metric_data.get('value')}"
             )
 
         else:
@@ -825,11 +1119,42 @@ def validate_normalized_data(
                 f"{status}"
             )
 
-            failures.append(metric)
+            failures.append(
+                metric
+            )
 
-    total_debt = normalized["metrics"]["total_debt"]
 
-    if total_debt.get("status") == "OK":
+    # ========================================================
+    # TOTAL DEBT
+    # ========================================================
+
+    total_debt = normalized[
+        "metrics"
+    ]["total_debt"]
+
+    total_debt_status = (
+        total_debt.get("status")
+    )
+
+    if (
+        company_type == "FINANCIAL"
+        and
+        total_debt_status
+        == "NOT_APPLICABLE"
+    ):
+
+        print(
+            "[PASS] total_debt: "
+            "NOT_APPLICABLE "
+            "(financial company)"
+        )
+
+    elif (
+        company_type == "NON_FINANCIAL"
+        and
+        total_debt_status
+        == "OK"
+    ):
 
         print(
             f"[PASS] total_debt: "
@@ -840,10 +1165,65 @@ def validate_normalized_data(
 
         print(
             "[WARN] total_debt: "
-            f"{total_debt.get('status')}"
+            f"{total_debt_status}"
+        )
+
+        if company_type == "NON_FINANCIAL":
+
+            failures.append(
+                "total_debt"
+            )
+
+
+    # ========================================================
+    # FAILURE SUMMARY
+    # ========================================================
+
+    if failures:
+
+        print()
+        print(
+            f"[WARN] {ticker} "
+            f"validation issues: "
+            f"{', '.join(failures)}"
+        )
+
+    else:
+
+        print()
+        print(
+            f"[PASS] {ticker} "
+            f"validation complete."
         )
 
     return failures
+
+
+# ============================================================
+# SAVE JSON
+# ============================================================
+
+def save_json(
+    path: Path,
+    data: dict,
+):
+
+    path.parent.mkdir(
+        parents=True,
+        exist_ok=True
+    )
+
+    with path.open(
+        "w",
+        encoding="utf-8"
+    ) as f:
+
+        json.dump(
+            data,
+            f,
+            ensure_ascii=False,
+            indent=2
+        )
 
 
 # ============================================================
@@ -864,18 +1244,29 @@ def main():
 
     success_count = 0
 
-    print("=== SEC Company Facts Test ===")
+    total_count = len(
+        TICKERS
+    )
+
+
+    print(
+        "=== SEC Company Facts Test ==="
+    )
+
     print()
 
-    for ticker, cik in TICKERS.items():
+
+    for ticker, config in TICKERS.items():
+
+        cik = config["cik"]
+
+        company_type = config[
+            "company_type"
+        ]
+
 
         print(
             f"Ticker: {ticker}"
-        )
-
-        url = (
-            "https://data.sec.gov/api/xbrl/"
-            f"companyfacts/CIK{cik}.json"
         )
 
         print(
@@ -883,91 +1274,109 @@ def main():
         )
 
         print(
+            f"Company type: "
+            f"{company_type}"
+        )
+
+
+        url = (
+            "https://data.sec.gov/api/xbrl/"
+            f"companyfacts/CIK{cik}.json"
+        )
+
+
+        print(
             f"URL: {url}"
         )
 
+
         try:
 
-            # ------------------------------------------------
-            # 1. Fetch
-            # ------------------------------------------------
+            # =================================================
+            # 1. FETCH
+            # =================================================
 
-            data = fetch_json(url)
+            data = fetch_json(
+                url
+            )
 
-            # ------------------------------------------------
-            # 2. Validate raw response
-            # ------------------------------------------------
 
-            validate_companyfacts(data)
+            # =================================================
+            # 2. RAW VALIDATION
+            # =================================================
 
-            # ------------------------------------------------
-            # 3. Save raw cache
-            # ------------------------------------------------
+            validate_companyfacts(
+                data
+            )
+
+
+            # =================================================
+            # 3. SAVE RAW CACHE
+            # =================================================
 
             raw_file = (
-                RAW_DIR /
+                RAW_DIR
+                /
                 f"{ticker}_companyfacts.json"
             )
 
-            with raw_file.open(
-                "w",
-                encoding="utf-8"
-            ) as f:
-
-                json.dump(
-                    data,
-                    f,
-                    ensure_ascii=False,
-                    indent=2
-                )
+            save_json(
+                raw_file,
+                data
+            )
 
             print(
                 f"[PASS] Raw cache written: "
                 f"{raw_file}"
             )
 
-            # ------------------------------------------------
-            # 4. Normalize
-            # ------------------------------------------------
+
+            # =================================================
+            # 4. NORMALIZE
+            # =================================================
 
             normalized = normalize_company(
                 ticker,
                 data,
+                company_type,
             )
 
-            # ------------------------------------------------
-            # 5. Validate normalized data
-            # ------------------------------------------------
 
-            failures = validate_normalized_data(
-                normalized
+            # =================================================
+            # 5. VALIDATE NORMALIZED DATA
+            # =================================================
+
+            failures = (
+                validate_normalized_data(
+                    normalized
+                )
             )
 
-            # ------------------------------------------------
-            # 6. Save normalized data
-            # ------------------------------------------------
+
+            # =================================================
+            # 6. SAVE NORMALIZED DATA
+            # =================================================
 
             processed_file = (
-                PROCESSED_DIR /
+                PROCESSED_DIR
+                /
                 f"{ticker}_fundamentals.json"
             )
 
-            with processed_file.open(
-                "w",
-                encoding="utf-8"
-            ) as f:
-
-                json.dump(
-                    normalized,
-                    f,
-                    ensure_ascii=False,
-                    indent=2
-                )
+            save_json(
+                processed_file,
+                normalized
+            )
 
             print(
                 f"[PASS] Normalized data written: "
                 f"{processed_file}"
             )
+
+
+            # =================================================
+            # 7. SUCCESS COUNT
+            # =================================================
 
             if not failures:
 
@@ -981,9 +1390,11 @@ def main():
             else:
 
                 print(
-                    f"[WARN] {ticker} has missing metrics: "
+                    f"[WARN] {ticker} has validation "
+                    f"issues: "
                     f"{', '.join(failures)}"
                 )
+
 
         except Exception as e:
 
@@ -992,27 +1403,45 @@ def main():
                 f"{type(e).__name__}: {e}"
             )
 
-        print("-" * 70)
+
+        print(
+            "-" * 70
+        )
+
+
+    # ========================================================
+    # FINAL RESULT
+    # ========================================================
 
     print()
+
     print(
         f"Result: "
-        f"{success_count}/{len(TICKERS)} "
+        f"{success_count}/{total_count} "
         f"tickers fully normalized"
     )
 
-    if success_count != len(TICKERS):
+
+    if success_count != total_count:
 
         raise RuntimeError(
             "SEC fundamental normalization "
             "test failed"
         )
 
+
     print()
+
     print(
-        "[PASS] All SEC fundamental normalization tests passed."
+        "[PASS] All SEC fundamental normalization "
+        "tests passed."
     )
 
 
+# ============================================================
+# ENTRY POINT
+# ============================================================
+
 if __name__ == "__main__":
+
     main()
