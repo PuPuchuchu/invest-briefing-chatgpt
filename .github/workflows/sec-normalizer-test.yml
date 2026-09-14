@@ -25,5 +25,7 @@ jobs:
           pip install pytest
 
       - name: Run SEC normalizer unit tests
+        env:
+          PYTHONPATH: ${{ github.workspace }}
         run: |
           pytest -q tests/test_sec_normalizer.py
