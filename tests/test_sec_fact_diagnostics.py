@@ -3,7 +3,7 @@ import gzip
 import zlib
 from pathlib import Path
 from urllib.request import Request, urlopen
-from datetime import datetime, date
+from datetime import datetime
 
 
 # ============================================================
@@ -18,7 +18,6 @@ TICKERS = {
     "PLTR": "0001321655",
 }
 
-
 RAW_DIR = Path("data/raw/sec")
 
 
@@ -28,141 +27,124 @@ RAW_DIR = Path("data/raw/sec")
 
 TARGET_CONCEPTS = {
 
-    # --------------------------------------------------------
-    # NVDA
-    # --------------------------------------------------------
-
     "NVDA": [
-
         "RevenueFromContractWithCustomerExcludingAssessedTax",
-
         "Revenues",
-
         "SalesRevenueNet",
-
         "NetIncomeLoss",
-
         "ProfitLoss",
-
         "OperatingIncomeLoss",
-
         "NetCashProvidedByUsedInOperatingActivities",
-
         "PaymentsToAcquirePropertyPlantAndEquipment",
-
         "PaymentsToAcquireOtherPropertyPlantAndEquipment",
-
         "CashAndCashEquivalentsAtCarryingValue",
-
         "LongTermDebtCurrent",
-
         "LongTermDebtNoncurrent",
-
         "LongTermDebt",
-
         "DebtCurrent",
-
         "ShortTermBorrowings",
-
         "ShortTermDebt",
-
         "DebtLongtermAndShorttermCombinedAmount",
-
         "EntityCommonStockSharesOutstanding",
-
         "CommonStockSharesOutstanding",
     ],
-
-
-    # --------------------------------------------------------
-    # LLY
-    # --------------------------------------------------------
 
     "LLY": [
-
         "RevenueFromContractWithCustomerExcludingAssessedTax",
-
         "Revenues",
-
         "SalesRevenueNet",
-
         "NetIncomeLoss",
-
         "ProfitLoss",
-
         "OperatingIncomeLoss",
-
         "NetCashProvidedByUsedInOperatingActivities",
-
         "PaymentsToAcquirePropertyPlantAndEquipment",
-
         "PaymentsToAcquireOtherPropertyPlantAndEquipment",
-
         "CashAndCashEquivalentsAtCarryingValue",
-
         "LongTermDebtCurrent",
-
         "LongTermDebtNoncurrent",
-
         "LongTermDebt",
-
         "DebtCurrent",
-
         "ShortTermBorrowings",
-
         "ShortTermDebt",
-
         "DebtLongtermAndShorttermCombinedAmount",
-
         "EntityCommonStockSharesOutstanding",
-
         "CommonStockSharesOutstanding",
     ],
 
-
-    # --------------------------------------------------------
-    # PLTR
-    # --------------------------------------------------------
-
     "PLTR": [
-
         "RevenueFromContractWithCustomerExcludingAssessedTax",
-
         "Revenues",
-
         "SalesRevenueNet",
-
         "NetIncomeLoss",
-
         "ProfitLoss",
-
         "OperatingIncomeLoss",
-
         "NetCashProvidedByUsedInOperatingActivities",
-
         "PaymentsToAcquirePropertyPlantAndEquipment",
-
+        "PaymentsToAcquireOtherPropertyPlantAndPropertyPlantEquipment",
         "PaymentsToAcquireOtherPropertyPlantAndEquipment",
-
         "CashAndCashEquivalentsAtCarryingValue",
-
         "LongTermDebtCurrent",
-
         "LongTermDebtNoncurrent",
-
         "LongTermDebt",
-
         "DebtCurrent",
-
         "ShortTermBorrowings",
-
         "ShortTermDebt",
-
         "DebtLongtermAndShorttermCombinedAmount",
-
         "EntityCommonStockSharesOutstanding",
-
         "CommonStockSharesOutstanding",
+    ],
+}
+
+
+# ============================================================
+# DIAGNOSTIC SEARCH KEYWORDS
+# ============================================================
+
+SEARCH_GROUPS = {
+
+    "Operating Income": [
+        "operating",
+        "income",
+    ],
+
+    "Operating": [
+        "operating",
+    ],
+
+    "Income": [
+        "income",
+    ],
+
+    "Debt": [
+        "debt",
+    ],
+
+    "Borrowing": [
+        "borrow",
+    ],
+
+    "Long Term Debt": [
+        "long",
+        "term",
+        "debt",
+    ],
+
+    "Current Debt": [
+        "current",
+        "debt",
+    ],
+
+    "Cash": [
+        "cash",
+    ],
+
+    "Revenue": [
+        "revenue",
+    ],
+
+    "Property Plant Equipment": [
+        "property",
+        "plant",
     ],
 }
 
@@ -185,7 +167,7 @@ def fetch_json(url: str) -> dict:
 
     with urlopen(
         request,
-        timeout=30
+        timeout=30,
     ) as response:
 
         status = response.status
@@ -193,7 +175,7 @@ def fetch_json(url: str) -> dict:
         content_encoding = (
             response.headers.get(
                 "Content-Encoding",
-                ""
+                "",
             ).lower()
         )
 
@@ -242,19 +224,16 @@ def fetch_json(url: str) -> dict:
 # DATE HELPERS
 # ============================================================
 
-def parse_date(
-    value
-):
+def parse_date(value):
 
     if not value:
-
         return None
 
     try:
 
         return datetime.strptime(
             value,
-            "%Y-%m-%d"
+            "%Y-%m-%d",
         ).date()
 
     except ValueError:
@@ -262,9 +241,7 @@ def parse_date(
         return None
 
 
-def duration_days(
-    observation
-):
+def duration_days(observation):
 
     start = parse_date(
         observation.get("start")
@@ -275,7 +252,6 @@ def duration_days(
     )
 
     if not start or not end:
-
         return None
 
     return (
@@ -284,12 +260,66 @@ def duration_days(
 
 
 # ============================================================
+# OBSERVATION HELPERS
+# ============================================================
+
+def observation_value(observation):
+
+    if "val" in observation:
+        return observation.get("val")
+
+    return observation.get("value")
+
+
+def is_numeric(value):
+
+    if isinstance(
+        value,
+        bool,
+    ):
+        return False
+
+    return isinstance(
+        value,
+        (int, float),
+    )
+
+
+def is_annual_observation(
+    observation,
+):
+
+    return (
+        observation.get("form") == "10-K"
+        and observation.get("fp") == "FY"
+        and bool(
+            observation.get("start")
+        )
+        and bool(
+            observation.get("end")
+        )
+    )
+
+
+def is_instant_observation(
+    observation,
+):
+
+    return (
+        not observation.get("start")
+        and bool(
+            observation.get("end")
+        )
+    )
+
+
+# ============================================================
 # OBSERVATION DISPLAY
 # ============================================================
 
 def print_observation(
     observation,
-    index=None
+    index=None,
 ):
 
     if index is not None:
@@ -300,7 +330,7 @@ def print_observation(
 
     print(
         f"    value      = "
-        f"{observation.get('val')}"
+        f"{observation_value(observation)}"
     )
 
     print(
@@ -360,21 +390,21 @@ def print_observation(
 
 def get_target_concepts(
     data: dict,
-    target_names
+    target_names,
 ):
 
     found = []
 
     facts = data.get(
         "facts",
-        {}
+        {},
     )
 
     for namespace, namespace_data in facts.items():
 
         if not isinstance(
             namespace_data,
-            dict
+            dict,
         ):
             continue
 
@@ -395,11 +425,88 @@ def get_target_concepts(
 
 
 # ============================================================
+# CONCEPT SUMMARY
+# ============================================================
+
+def get_concept_statistics(
+    concept_data,
+):
+
+    units = concept_data.get(
+        "units",
+        {},
+    )
+
+    observation_count = 0
+    annual_count = 0
+    instant_count = 0
+
+    latest_filed = None
+    latest_end = None
+
+    for unit, observations in units.items():
+
+        if not isinstance(
+            observations,
+            list,
+        ):
+            continue
+
+        for observation in observations:
+
+            observation_count += 1
+
+            filed = observation.get(
+                "filed"
+            )
+
+            end = observation.get(
+                "end"
+            )
+
+            if filed:
+
+                if (
+                    latest_filed is None
+                    or filed > latest_filed
+                ):
+                    latest_filed = filed
+
+            if end:
+
+                if (
+                    latest_end is None
+                    or end > latest_end
+                ):
+                    latest_end = end
+
+            if is_annual_observation(
+                observation
+            ):
+
+                annual_count += 1
+
+            if is_instant_observation(
+                observation
+            ):
+
+                instant_count += 1
+
+    return {
+        "observation_count": observation_count,
+        "annual_count": annual_count,
+        "instant_count": instant_count,
+        "latest_filed": latest_filed,
+        "latest_end": latest_end,
+    }
+
+
+# ============================================================
 # PRINT CONCEPT
 # ============================================================
 
 def print_concept(
-    item
+    item,
 ):
 
     namespace = item[
@@ -416,7 +523,7 @@ def print_concept(
 
     print()
     print(
-        "-" * 80
+        "-" * 90
     )
 
     print(
@@ -424,9 +531,48 @@ def print_concept(
         f"{namespace}:{concept}"
     )
 
+    print(
+        f"LABEL: "
+        f"{concept_data.get('label')}"
+    )
+
+    print(
+        f"DESCRIPTION: "
+        f"{concept_data.get('description')}"
+    )
+
+    stats = get_concept_statistics(
+        concept_data
+    )
+
+    print(
+        f"OBSERVATIONS: "
+        f"{stats['observation_count']}"
+    )
+
+    print(
+        f"ANNUAL 10-K/FY: "
+        f"{stats['annual_count']}"
+    )
+
+    print(
+        f"INSTANT: "
+        f"{stats['instant_count']}"
+    )
+
+    print(
+        f"LATEST FILED: "
+        f"{stats['latest_filed']}"
+    )
+
+    print(
+        f"LATEST END: "
+        f"{stats['latest_end']}"
+    )
+
     units = concept_data.get(
         "units",
-        {}
+        {},
     )
 
     if not units:
@@ -437,12 +583,11 @@ def print_concept(
 
         return
 
-
     for unit, observations in units.items():
 
         if not isinstance(
             observations,
-            list
+            list,
         ):
             continue
 
@@ -450,10 +595,6 @@ def print_concept(
         print(
             f"  UNIT: {unit}"
         )
-
-        # ----------------------------------------------------
-        # Sort newest filing first
-        # ----------------------------------------------------
 
         sorted_observations = sorted(
             observations,
@@ -465,60 +606,38 @@ def print_concept(
             reverse=True,
         )
 
-
-        # ----------------------------------------------------
-        # Show recent observations
-        # ----------------------------------------------------
-
-        max_rows = 20
-
         for index, observation in enumerate(
-            sorted_observations[
-                :max_rows
-            ],
-            start=1
+            sorted_observations[:10],
+            start=1,
         ):
 
             print_observation(
                 observation,
-                index
+                index,
             )
 
 
 # ============================================================
-# SEARCH CUSTOM TAXONOMY
+# SEARCH ALL TAXONOMIES
 # ============================================================
 
-def search_custom_taxonomy(
+def search_taxonomy(
     data: dict,
-    keywords
+    keywords,
 ):
-
-    """
-    us-gaap / dei 이외 namespace까지 검색한다.
-
-    LLY처럼 회사별 custom taxonomy를 사용하는 경우
-    Operating Income 후보를 찾기 위한 진단용 함수.
-    """
 
     facts = data.get(
         "facts",
-        {}
+        {},
     )
 
     results = []
 
     for namespace, namespace_data in facts.items():
 
-        if namespace in (
-            "us-gaap",
-            "dei",
-        ):
-            continue
-
         if not isinstance(
             namespace_data,
-            dict
+            dict,
         ):
             continue
 
@@ -546,96 +665,167 @@ def search_custom_taxonomy(
 
 
 # ============================================================
-# CUSTOM TAXONOMY DISPLAY
+# SEARCH RESULT SCORING
 # ============================================================
 
-def print_custom_candidates(
+def candidate_score(
+    item,
+):
+
+    concept = item[
+        "concept"
+    ].lower()
+
+    namespace = item[
+        "namespace"
+    ].lower()
+
+    score = 0
+
+    # Prefer us-gaap.
+    if namespace == "us-gaap":
+        score += 50
+
+    # Prefer exact/strong economic terminology.
+    priority_terms = [
+        "operatingincomeloss",
+        "operatingincome",
+        "debtcurrent",
+        "longtermdebtcurrent",
+        "longtermdebtnoncurrent",
+        "shorttermdebt",
+        "shorttermborrowings",
+        "debtlongtermandshorttermcombinedamount",
+    ]
+
+    for rank, term in enumerate(
+        priority_terms
+    ):
+
+        if term in concept:
+            score += (
+                100
+                - rank * 5
+            )
+
+    stats = get_concept_statistics(
+        item["data"]
+    )
+
+    score += min(
+        stats["annual_count"],
+        20,
+    )
+
+    score += min(
+        stats["instant_count"],
+        20,
+    )
+
+    return score
+
+
+# ============================================================
+# PRINT SEARCH RESULTS
+# ============================================================
+
+def print_search_results(
     data: dict,
     keywords,
-    label
+    label,
+    max_candidates=30,
 ):
 
     print()
     print(
-        "=" * 80
+        "=" * 90
     )
 
     print(
-        f"CUSTOM TAXONOMY SEARCH: "
-        f"{label}"
+        f"CONCEPT SEARCH: {label}"
     )
 
     print(
         f"Keywords: {keywords}"
     )
 
-    candidates = search_custom_taxonomy(
+    candidates = search_taxonomy(
         data,
-        keywords
+        keywords,
     )
 
     if not candidates:
 
         print(
-            "[WARN] No custom taxonomy candidates found."
+            "[WARN] No candidates found."
         )
 
         return
 
+    candidates.sort(
+        key=candidate_score,
+        reverse=True,
+    )
 
     print(
         f"[FOUND] "
         f"{len(candidates)} candidate(s)"
     )
 
+    for rank, item in enumerate(
+        candidates[:max_candidates],
+        start=1,
+    ):
 
-    for item in candidates:
+        concept_data = item[
+            "data"
+        ]
+
+        stats = get_concept_statistics(
+            concept_data
+        )
 
         print()
         print(
-            f"- {item['namespace']}:"
+            f"[{rank}] "
+            f"{item['namespace']}:"
             f"{item['concept']}"
         )
 
-        units = item[
-            "data"
-        ].get(
-            "units",
-            {}
+        print(
+            f"    label       = "
+            f"{concept_data.get('label')}"
         )
 
-        for unit, observations in units.items():
+        print(
+            f"    description = "
+            f"{concept_data.get('description')}"
+        )
 
-            if not isinstance(
-                observations,
-                list
-            ):
-                continue
+        print(
+            f"    observations= "
+            f"{stats['observation_count']}"
+        )
 
-            sorted_observations = sorted(
-                observations,
-                key=lambda x: (
-                    x.get("filed", ""),
-                    x.get("end", ""),
-                    x.get("start", ""),
-                ),
-                reverse=True,
-            )
+        print(
+            f"    annual      = "
+            f"{stats['annual_count']}"
+        )
 
-            for observation in sorted_observations[:5]:
+        print(
+            f"    instant     = "
+            f"{stats['instant_count']}"
+        )
 
-                print(
-                    f"  {unit} | "
-                    f"value={observation.get('val')} | "
-                    f"start={observation.get('start')} | "
-                    f"end={observation.get('end')} | "
-                    f"filed={observation.get('filed')} | "
-                    f"form={observation.get('form')} | "
-                    f"fp={observation.get('fp')} | "
-                    f"fy={observation.get('fy')} | "
-                    f"frame={observation.get('frame')} | "
-                    f"accn={observation.get('accn')}"
-                )
+        print(
+            f"    latest filed= "
+            f"{stats['latest_filed']}"
+        )
+
+        print(
+            f"    latest end  = "
+            f"{stats['latest_end']}"
+        )
 
 
 # ============================================================
@@ -643,7 +833,7 @@ def print_custom_candidates(
 # ============================================================
 
 def print_period_summary(
-    item
+    item,
 ):
 
     concept = (
@@ -657,12 +847,12 @@ def print_period_summary(
         "data"
     ].get(
         "units",
-        {}
+        {},
     ).items():
 
         if not isinstance(
             values,
-            list
+            list,
         ):
             continue
 
@@ -678,21 +868,15 @@ def print_period_summary(
                 row
             )
 
-
     print()
     print(
         f"PERIOD SUMMARY: {concept}"
     )
 
-
     annual = []
-
     ytd = []
-
     quarterly = []
-
     instant = []
-
 
     for observation in observations:
 
@@ -706,14 +890,12 @@ def print_period_summary(
 
             continue
 
-
         days = duration_days(
             observation
         )
 
         if days is None:
             continue
-
 
         if (
             observation.get("form")
@@ -727,7 +909,6 @@ def print_period_summary(
                 observation
             )
 
-
         if (
             150 <= days <= 220
         ):
@@ -736,7 +917,6 @@ def print_period_summary(
                 observation
             )
 
-
         if (
             70 <= days <= 110
         ):
@@ -744,7 +924,6 @@ def print_period_summary(
             quarterly.append(
                 observation
             )
-
 
     print(
         f"  Annual 10-K FY observations : "
@@ -766,7 +945,6 @@ def print_period_summary(
         f"{len(instant)}"
     )
 
-
     if annual:
 
         print()
@@ -786,7 +964,7 @@ def print_period_summary(
         for observation in annual[:5]:
 
             print(
-                f"    value={observation.get('val')} | "
+                f"    value={observation_value(observation)} | "
                 f"start={observation.get('start')} | "
                 f"end={observation.get('end')} | "
                 f"days={duration_days(observation)} | "
@@ -804,7 +982,7 @@ def print_period_summary(
 
 def diagnose_company(
     ticker,
-    cik
+    cik,
 ):
 
     print()
@@ -821,17 +999,14 @@ def diagnose_company(
         "#" * 90
     )
 
-
     url = (
         "https://data.sec.gov/api/xbrl/"
         f"companyfacts/CIK{cik}.json"
     )
 
-
     print(
         f"URL: {url}"
     )
-
 
     # --------------------------------------------------------
     # Fetch
@@ -840,7 +1015,6 @@ def diagnose_company(
     data = fetch_json(
         url
     )
-
 
     print(
         f"Entity: "
@@ -851,7 +1025,6 @@ def diagnose_company(
         f"CIK: "
         f"{data.get('cik')}"
     )
-
 
     # --------------------------------------------------------
     # Save raw
@@ -865,28 +1038,25 @@ def diagnose_company(
 
     raw_file.parent.mkdir(
         parents=True,
-        exist_ok=True
+        exist_ok=True,
     )
-
 
     with raw_file.open(
         "w",
-        encoding="utf-8"
+        encoding="utf-8",
     ) as f:
 
         json.dump(
             data,
             f,
             ensure_ascii=False,
-            indent=2
+            indent=2,
         )
-
 
     print(
         f"[PASS] Diagnostic raw cache: "
         f"{raw_file}"
     )
-
 
     # ========================================================
     # TARGET CONCEPTS
@@ -894,7 +1064,7 @@ def diagnose_company(
 
     print()
     print(
-        "=" * 80
+        "=" * 90
     )
 
     print(
@@ -905,18 +1075,15 @@ def diagnose_company(
         ticker
     ]
 
-
     concepts = get_target_concepts(
         data,
-        target_names
+        target_names,
     )
-
 
     print(
         f"Found "
         f"{len(concepts)} target concept(s)"
     )
-
 
     for item in concepts:
 
@@ -928,63 +1095,81 @@ def diagnose_company(
             item
         )
 
+    # ========================================================
+    # ALL TAXONOMY SEARCH
+    # ========================================================
+
+    for label, keywords in SEARCH_GROUPS.items():
+
+        print_search_results(
+            data,
+            keywords,
+            label,
+        )
 
     # ========================================================
-    # CUSTOM TAXONOMY
+    # COMPANY-SPECIFIC FOCUS
     # ========================================================
 
-    # --------------------------------------------------------
-    # Operating income
-    # --------------------------------------------------------
+    if ticker == "LLY":
 
-    print_custom_candidates(
-        data,
-        [
-            "operating",
-            "income",
-        ],
-        "Operating Income"
-    )
+        print()
+        print(
+            "=" * 90
+        )
 
+        print(
+            "LLY OPERATING INCOME FOCUS"
+        )
 
-    # --------------------------------------------------------
-    # Revenue
-    # --------------------------------------------------------
+        print_search_results(
+            data,
+            [
+                "operating",
+                "income",
+            ],
+            "LLY Operating Income",
+            max_candidates=50,
+        )
 
-    print_custom_candidates(
-        data,
-        [
-            "revenue",
-        ],
-        "Revenue"
-    )
+    if ticker == "PLTR":
 
+        print()
+        print(
+            "=" * 90
+        )
 
-    # --------------------------------------------------------
-    # Debt
-    # --------------------------------------------------------
+        print(
+            "PLTR DEBT FOCUS"
+        )
 
-    print_custom_candidates(
-        data,
-        [
-            "debt",
-        ],
-        "Debt"
-    )
+        print_search_results(
+            data,
+            [
+                "debt",
+            ],
+            "PLTR Debt",
+            max_candidates=50,
+        )
 
+        print_search_results(
+            data,
+            [
+                "borrow",
+            ],
+            "PLTR Borrowing",
+            max_candidates=50,
+        )
 
-    # --------------------------------------------------------
-    # CapEx
-    # --------------------------------------------------------
-
-    print_custom_candidates(
-        data,
-        [
-            "property",
-            "plant",
-        ],
-        "Property Plant Equipment / CapEx"
-    )
+        print_search_results(
+            data,
+            [
+                "current",
+                "debt",
+            ],
+            "PLTR Current Debt",
+            max_candidates=50,
+        )
 
 
 # ============================================================
@@ -1005,7 +1190,7 @@ def main():
 
             diagnose_company(
                 ticker,
-                cik
+                cik,
             )
 
         except Exception as e:
@@ -1020,7 +1205,6 @@ def main():
         print(
             "=" * 90
         )
-
 
     print()
     print(
