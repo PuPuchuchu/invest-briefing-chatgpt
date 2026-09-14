@@ -20,11 +20,9 @@ PROCESSED_DIR = BASE_DIR / "data" / "processed" / "fundamentals"
 
 # Approximate duration ranges.
 #
-# These are intentionally broad because fiscal calendars differ
-# between companies and some companies use 52/53-week calendars.
-#
-# The ranges are NOT used as the sole source of truth.
-# Form/fp/fy/end/start information is also considered.
+# These ranges are intentionally broad because fiscal calendars
+# differ between companies and some companies use 52/53-week
+# fiscal calendars.
 DURATION_RANGES = {
     "q1": (70, 110),
     "ytd_6m": (150, 210),
@@ -47,7 +45,10 @@ def _parse_date(value: Any) -> date | None:
         return None
 
     try:
-        return datetime.strptime(value, "%Y-%m-%d").date()
+        return datetime.strptime(
+            value,
+            "%Y-%m-%d",
+        ).date()
     except ValueError:
         return None
 
@@ -57,11 +58,17 @@ def _duration_days(observation: dict) -> int | None:
     Return inclusive duration in days.
 
     Example:
+
         2025-01-01 -> 2025-03-31
         = 90 days
     """
-    start = _parse_date(observation.get("start"))
-    end = _parse_date(observation.get("end"))
+    start = _parse_date(
+        observation.get("start")
+    )
+
+    end = _parse_date(
+        observation.get("end")
+    )
 
     if start is None or end is None:
         return None
@@ -72,11 +79,36 @@ def _duration_days(observation: dict) -> int | None:
     return (end - start).days + 1
 
 
+def _get_observation_value(
+    observation: dict,
+) -> Any:
+    """
+    Return the numeric value stored in an observation.
+
+    SEC Company Facts uses:
+
+        "val"
+
+    Synthetic test fixtures may use:
+
+        "value"
+
+    Support both representations.
+
+    SEC's "val" takes precedence when both are present.
+    """
+    if "val" in observation:
+        return observation.get("val")
+
+    return observation.get("value")
+
+
 def _is_numeric(value: Any) -> bool:
     """
     Return True for finite int/float values.
 
-    bool is intentionally excluded because bool is a subclass of int.
+    bool is intentionally excluded because bool is a subclass
+    of int in Python.
     """
     if isinstance(value, bool):
         return False
@@ -90,23 +122,39 @@ def _is_numeric(value: Any) -> bool:
     )
 
 
-def _filing_sort_key(observation: dict) -> tuple:
+def _filing_sort_key(
+    observation: dict,
+) -> tuple:
     """
     Sort observations by information availability.
 
-    Earlier filing date = information became public earlier.
+    Earlier filing date means the information became publicly
+    available earlier.
 
-    Secondary keys are included for deterministic ordering.
+    Secondary keys make sorting deterministic.
     """
-    filed = _parse_date(observation.get("filed"))
-    end = _parse_date(observation.get("end"))
-    start = _parse_date(observation.get("start"))
+    filed = _parse_date(
+        observation.get("filed")
+    )
+
+    end = _parse_date(
+        observation.get("end")
+    )
+
+    start = _parse_date(
+        observation.get("start")
+    )
 
     return (
         filed or date.max,
         end or date.max,
         start or date.max,
-        str(observation.get("accession", "")),
+        str(
+            observation.get(
+                "accession",
+                "",
+            )
+        ),
     )
 
 
@@ -114,61 +162,88 @@ def _filing_sort_key(observation: dict) -> tuple:
 # OBSERVATION CLASSIFICATION
 # ============================================================
 
-def is_duration_observation(observation: dict) -> bool:
+def is_duration_observation(
+    observation: dict,
+) -> bool:
     """
     Return True if observation contains a valid duration.
-
-    Duration observations require both start and end dates.
     """
-    return (
-        _parse_date(observation.get("start")) is not None
-        and _parse_date(observation.get("end")) is not None
+    if not isinstance(observation, dict):
+        return False
+
+    start = _parse_date(
+        observation.get("start")
     )
 
+    end = _parse_date(
+        observation.get("end")
+    )
 
-def is_annual_observation(observation: dict) -> bool:
+    if start is None or end is None:
+        return False
+
+    return end >= start
+
+
+def is_annual_observation(
+    observation: dict,
+) -> bool:
     """
     Return True for annual 10-K / FY observations.
 
     SEC Company Facts annual observations are normally represented
-    by form=10-K and fp=FY.
+    by:
+
+        form = 10-K
+        fp   = FY
     """
-    if not is_duration_observation(observation):
+    if not is_duration_observation(
+        observation
+    ):
         return False
 
-    form = observation.get("form")
-    fp = observation.get("fp")
-
-    if form != "10-K":
+    if observation.get("form") != "10-K":
         return False
 
-    if fp != "FY":
+    if observation.get("fp") != "FY":
         return False
 
-    duration = _duration_days(observation)
+    duration = _duration_days(
+        observation
+    )
 
     if duration is None:
         return False
 
-    min_days, max_days = DURATION_RANGES["annual"]
+    min_days, max_days = DURATION_RANGES[
+        "annual"
+    ]
 
-    return min_days <= duration <= max_days
-
-
-def is_quarterly_form_observation(observation: dict) -> bool:
-    """
-    Return True for 10-Q duration observations.
-
-    This intentionally checks the SEC form rather than assuming
-    every duration observation is quarterly.
-    """
     return (
-        is_duration_observation(observation)
-        and observation.get("form") == "10-Q"
+        min_days
+        <= duration
+        <= max_days
     )
 
 
-def classify_duration_observation(observation: dict) -> str:
+def is_quarterly_form_observation(
+    observation: dict,
+) -> bool:
+    """
+    Return True for 10-Q duration observations.
+    """
+    return (
+        is_duration_observation(
+            observation
+        )
+        and observation.get("form")
+        == "10-Q"
+    )
+
+
+def classify_duration_observation(
+    observation: dict,
+) -> str:
     """
     Classify a duration observation.
 
@@ -179,34 +254,46 @@ def classify_duration_observation(observation: dict) -> str:
         ytd_6m
         ytd_9m
         unknown
-
-    Classification is based primarily on form/fp and duration.
     """
-    if not is_duration_observation(observation):
+    if not is_duration_observation(
+        observation
+    ):
         return "unknown"
 
     # --------------------------------------------------------
     # Annual
     # --------------------------------------------------------
 
-    if is_annual_observation(observation):
+    if is_annual_observation(
+        observation
+    ):
         return "annual"
 
     # --------------------------------------------------------
-    # Quarterly 10-Q observations
+    # Quarterly 10-Q
     # --------------------------------------------------------
 
     if observation.get("form") != "10-Q":
         return "unknown"
 
-    duration = _duration_days(observation)
+    duration = _duration_days(
+        observation
+    )
 
     if duration is None:
         return "unknown"
 
-    q1_min, q1_max = DURATION_RANGES["q1"]
-    h1_min, h1_max = DURATION_RANGES["ytd_6m"]
-    ytd9_min, ytd9_max = DURATION_RANGES["ytd_9m"]
+    q1_min, q1_max = DURATION_RANGES[
+        "q1"
+    ]
+
+    h1_min, h1_max = DURATION_RANGES[
+        "ytd_6m"
+    ]
+
+    ytd9_min, ytd9_max = DURATION_RANGES[
+        "ytd_9m"
+    ]
 
     if q1_min <= duration <= q1_max:
         return "q1"
@@ -233,18 +320,30 @@ def filter_valid_duration_observations(
     1. are dictionaries
     2. contain valid start/end dates
     3. have end >= start
-    4. contain a numeric value
+    4. contain a numeric observation value
+
+    Both SEC "val" and synthetic-test "value"
+    representations are supported.
     """
     result = []
 
     for observation in observations:
-        if not isinstance(observation, dict):
+        if not isinstance(
+            observation,
+            dict,
+        ):
             continue
 
-        if not is_duration_observation(observation):
+        if not is_duration_observation(
+            observation
+        ):
             continue
 
-        if not _is_numeric(observation.get("val")):
+        value = _get_observation_value(
+            observation
+        )
+
+        if not _is_numeric(value):
             continue
 
         result.append(observation)
@@ -288,43 +387,60 @@ def extract_annual_history(
 
     One observation is retained per fiscal year.
 
-    If multiple observations exist for the same FY, the earliest
-    filing is preferred because it represents the earliest point
-    at which the information became publicly available.
+    If multiple observations exist for the same FY,
+    the earliest filing is preferred because it represents
+    the earliest point at which the information became
+    publicly available.
     """
-    valid = filter_valid_duration_observations(observations)
+    valid = filter_valid_duration_observations(
+        observations
+    )
 
     annual = [
         observation
         for observation in valid
-        if is_annual_observation(observation)
+        if is_annual_observation(
+            observation
+        )
     ]
 
-    grouped: dict[Any, list[dict]] = defaultdict(list)
+    grouped: dict[Any, list[dict]] = defaultdict(
+        list
+    )
 
     for observation in annual:
         fy = observation.get("fy")
 
         if fy is None:
-            # Without FY information we cannot safely perform
-            # one-record-per-fiscal-year deduplication.
             continue
 
-        grouped[fy].append(observation)
+        grouped[fy].append(
+            observation
+        )
 
     result = []
 
     for fy, records in grouped.items():
-        records = sort_by_filing_date(records)
+        records = sort_by_filing_date(
+            records
+        )
 
         selected = records[0].copy()
 
-        result.append(selected)
+        result.append(
+            selected
+        )
 
     result.sort(
         key=lambda observation: (
-            observation.get("fy", 0),
-            observation.get("end", ""),
+            observation.get(
+                "fy",
+                0,
+            ),
+            observation.get(
+                "end",
+                "",
+            ),
         )
     )
 
@@ -346,12 +462,13 @@ def extract_quarterly_history(
         ytd_9m
         unknown
 
-    Annual observations are intentionally excluded because
-    they belong to annual history extraction.
+    Annual observations are intentionally excluded.
 
     The original observations are preserved.
     """
-    valid = filter_valid_duration_observations(observations)
+    valid = filter_valid_duration_observations(
+        observations
+    )
 
     result = {
         "q1": [],
@@ -362,35 +479,31 @@ def extract_quarterly_history(
 
     for observation in valid:
         # ----------------------------------------------------
-        # IMPORTANT:
-        # Quarterly history must only contain 10-Q records.
-        #
-        # This prevents an annual 10-K/FY observation from
-        # producing:
-        #
-        #     KeyError: 'annual'
-        #
-        # inside the quarterly result dictionary.
+        # Quarterly history must contain only 10-Q records.
         # ----------------------------------------------------
-        if not is_quarterly_form_observation(observation):
+
+        if not is_quarterly_form_observation(
+            observation
+        ):
             continue
 
         classification = classify_duration_observation(
             observation
         )
 
-        # Defensive guard.
-        #
-        # Even if a future classification is added to
-        # classify_duration_observation(), it must not break
-        # this function.
         if classification not in result:
             continue
 
-        result[classification].append(observation)
+        result[
+            classification
+        ].append(
+            observation
+        )
 
     for key in result:
-        result[key] = sort_by_filing_date(result[key])
+        result[key] = sort_by_filing_date(
+            result[key]
+        )
 
     return result
 
@@ -404,20 +517,30 @@ def _same_fiscal_year(
     observation_b: dict,
 ) -> bool:
     """
-    Return True if two observations belong to the same fiscal year.
+    Return True if two observations belong to the same
+    fiscal year.
 
-    Prefer SEC fy when available.
+    Prefer SEC "fy" when available.
 
-    Fall back to calendar year of the end date when fy is absent.
+    Fall back to calendar year of end date when fy
+    is unavailable.
     """
     fy_a = observation_a.get("fy")
     fy_b = observation_b.get("fy")
 
-    if fy_a is not None and fy_b is not None:
+    if (
+        fy_a is not None
+        and fy_b is not None
+    ):
         return fy_a == fy_b
 
-    end_a = _parse_date(observation_a.get("end"))
-    end_b = _parse_date(observation_b.get("end"))
+    end_a = _parse_date(
+        observation_a.get("end")
+    )
+
+    end_b = _parse_date(
+        observation_b.get("end")
+    )
 
     if end_a is None or end_b is None:
         return False
@@ -436,9 +559,9 @@ def _make_reconstructed_quarter(
     previous_observation: dict | None,
 ) -> dict | None:
     """
-    Reconstruct a standalone quarter from SEC YTD observations.
+    Reconstruct a standalone quarter.
 
-    Examples:
+    Logic:
 
         Q1 = Q1
 
@@ -448,27 +571,43 @@ def _make_reconstructed_quarter(
 
         Q4 = FY - 9M
 
-    The returned record preserves provenance.
+    Provenance is preserved.
     """
-    if not _is_numeric(current_observation.get("val")):
+    current_value = _get_observation_value(
+        current_observation
+    )
+
+    if not _is_numeric(
+        current_value
+    ):
         return None
 
-    current_value = current_observation["val"]
-
     # --------------------------------------------------------
-    # Q1 is already a standalone quarter.
+    # Q1 is already standalone.
     # --------------------------------------------------------
 
     if quarter == "Q1":
         return {
             "quarter": "Q1",
             "value": current_value,
-            "period_start": current_observation.get("start"),
-            "period_end": current_observation.get("end"),
-            "filed": current_observation.get("filed"),
-            "form": current_observation.get("form"),
-            "fy": current_observation.get("fy"),
-            "accession": current_observation.get("accession"),
+            "period_start": current_observation.get(
+                "start"
+            ),
+            "period_end": current_observation.get(
+                "end"
+            ),
+            "filed": current_observation.get(
+                "filed"
+            ),
+            "form": current_observation.get(
+                "form"
+            ),
+            "fy": current_observation.get(
+                "fy"
+            ),
+            "accession": current_observation.get(
+                "accession"
+            ),
             "reconstructed": False,
             "source": {
                 "current": current_observation.copy(),
@@ -483,44 +622,67 @@ def _make_reconstructed_quarter(
     if previous_observation is None:
         return None
 
-    if not _is_numeric(previous_observation.get("val")):
+    previous_value = _get_observation_value(
+        previous_observation
+    )
+
+    if not _is_numeric(
+        previous_value
+    ):
         return None
 
-    previous_value = previous_observation["val"]
-
-    value = current_value - previous_value
+    value = (
+        current_value
+        - previous_value
+    )
 
     previous_end = _parse_date(
-        previous_observation.get("end")
+        previous_observation.get(
+            "end"
+        )
     )
 
     current_end = _parse_date(
-        current_observation.get("end")
+        current_observation.get(
+            "end"
+        )
     )
 
-    if previous_end is None or current_end is None:
+    if (
+        previous_end is None
+        or current_end is None
+    ):
         return None
 
     # --------------------------------------------------------
-    # The standalone quarter starts the day after the
-    # previous cumulative period ended.
-    #
-    # Example:
-    # H1 ends 2025-06-30
-    # Q2 starts 2025-07-01
+    # Standalone quarter starts the day after the previous
+    # cumulative period ended.
     # --------------------------------------------------------
 
-    period_start = previous_end + timedelta(days=1)
+    period_start = (
+        previous_end
+        + timedelta(days=1)
+    )
 
     return {
         "quarter": quarter,
         "value": value,
         "period_start": period_start.isoformat(),
-        "period_end": current_observation.get("end"),
-        "filed": current_observation.get("filed"),
-        "form": current_observation.get("form"),
-        "fy": current_observation.get("fy"),
-        "accession": current_observation.get("accession"),
+        "period_end": current_observation.get(
+            "end"
+        ),
+        "filed": current_observation.get(
+            "filed"
+        ),
+        "form": current_observation.get(
+            "form"
+        ),
+        "fy": current_observation.get(
+            "fy"
+        ),
+        "accession": current_observation.get(
+            "accession"
+        ),
         "reconstructed": True,
         "source": {
             "current": current_observation.copy(),
@@ -536,11 +698,7 @@ def _select_one_observation(
     """
     Select one observation for a fiscal year.
 
-    The earliest filing is preferred.
-
-    This is important because SEC Company Facts can contain
-    duplicate observations caused by amended filings or repeated
-    disclosures.
+    Earliest filing is preferred.
     """
     candidates = [
         observation
@@ -551,7 +709,9 @@ def _select_one_observation(
     if not candidates:
         return None
 
-    candidates = sort_by_filing_date(candidates)
+    candidates = sort_by_filing_date(
+        candidates
+    )
 
     return candidates[0]
 
@@ -572,13 +732,11 @@ def reconstruct_standalone_quarters(
 
         Q4 = FY - 9M
 
-    The reconstruction is performed separately for each fiscal year.
-
-    Q4 filing provenance uses the FY / 10-K filing date because
-    Q4 results are only known publicly when the annual filing is
-    released.
+    Q4 filing provenance uses the FY / 10-K filing date.
     """
-    valid = filter_valid_duration_observations(observations)
+    valid = filter_valid_duration_observations(
+        observations
+    )
 
     # --------------------------------------------------------
     # Separate annual and quarterly observations.
@@ -587,16 +745,22 @@ def reconstruct_standalone_quarters(
     annual = [
         observation
         for observation in valid
-        if is_annual_observation(observation)
+        if is_annual_observation(
+            observation
+        )
     ]
 
     quarterly = [
         observation
         for observation in valid
-        if is_quarterly_form_observation(observation)
+        if is_quarterly_form_observation(
+            observation
+        )
     ]
 
-    classified = extract_quarterly_history(quarterly)
+    classified = extract_quarterly_history(
+        quarterly
+    )
 
     # --------------------------------------------------------
     # Build fiscal-year universe.
@@ -606,12 +770,16 @@ def reconstruct_standalone_quarters(
 
     for observation in annual:
         if observation.get("fy") is not None:
-            fiscal_years.add(observation.get("fy"))
+            fiscal_years.add(
+                observation.get("fy")
+            )
 
     for records in classified.values():
         for observation in records:
             if observation.get("fy") is not None:
-                fiscal_years.add(observation.get("fy"))
+                fiscal_years.add(
+                    observation.get("fy")
+                )
 
     result = []
 
@@ -620,6 +788,7 @@ def reconstruct_standalone_quarters(
     # --------------------------------------------------------
 
     for fy in sorted(fiscal_years):
+
         q1 = _select_one_observation(
             classified["q1"],
             fy,
@@ -645,14 +814,19 @@ def reconstruct_standalone_quarters(
         # ----------------------------------------------------
 
         if q1 is not None:
-            reconstructed_q1 = _make_reconstructed_quarter(
-                quarter="Q1",
-                current_observation=q1,
-                previous_observation=None,
+
+            reconstructed_q1 = (
+                _make_reconstructed_quarter(
+                    quarter="Q1",
+                    current_observation=q1,
+                    previous_observation=None,
+                )
             )
 
             if reconstructed_q1 is not None:
-                result.append(reconstructed_q1)
+                result.append(
+                    reconstructed_q1
+                )
 
         # ----------------------------------------------------
         # Q2 = H1 - Q1
@@ -661,16 +835,24 @@ def reconstruct_standalone_quarters(
         if (
             h1 is not None
             and q1 is not None
-            and _same_fiscal_year(h1, q1)
+            and _same_fiscal_year(
+                h1,
+                q1,
+            )
         ):
-            reconstructed_q2 = _make_reconstructed_quarter(
-                quarter="Q2",
-                current_observation=h1,
-                previous_observation=q1,
+
+            reconstructed_q2 = (
+                _make_reconstructed_quarter(
+                    quarter="Q2",
+                    current_observation=h1,
+                    previous_observation=q1,
+                )
             )
 
             if reconstructed_q2 is not None:
-                result.append(reconstructed_q2)
+                result.append(
+                    reconstructed_q2
+                )
 
         # ----------------------------------------------------
         # Q3 = 9M - H1
@@ -679,45 +861,67 @@ def reconstruct_standalone_quarters(
         if (
             ytd9 is not None
             and h1 is not None
-            and _same_fiscal_year(ytd9, h1)
+            and _same_fiscal_year(
+                ytd9,
+                h1,
+            )
         ):
-            reconstructed_q3 = _make_reconstructed_quarter(
-                quarter="Q3",
-                current_observation=ytd9,
-                previous_observation=h1,
+
+            reconstructed_q3 = (
+                _make_reconstructed_quarter(
+                    quarter="Q3",
+                    current_observation=ytd9,
+                    previous_observation=h1,
+                )
             )
 
             if reconstructed_q3 is not None:
-                result.append(reconstructed_q3)
+                result.append(
+                    reconstructed_q3
+                )
 
         # ----------------------------------------------------
         # Q4 = FY - 9M
         #
-        # Q4 uses the annual filing date.
+        # Q4 becomes publicly available with the annual filing.
         # ----------------------------------------------------
 
         if (
             fy_observation is not None
             and ytd9 is not None
-            and _same_fiscal_year(fy_observation, ytd9)
+            and _same_fiscal_year(
+                fy_observation,
+                ytd9,
+            )
         ):
-            reconstructed_q4 = _make_reconstructed_quarter(
-                quarter="Q4",
-                current_observation=fy_observation,
-                previous_observation=ytd9,
+
+            reconstructed_q4 = (
+                _make_reconstructed_quarter(
+                    quarter="Q4",
+                    current_observation=fy_observation,
+                    previous_observation=ytd9,
+                )
             )
 
             if reconstructed_q4 is not None:
-                result.append(reconstructed_q4)
+                result.append(
+                    reconstructed_q4
+                )
 
     # --------------------------------------------------------
-    # Sort chronologically.
+    # Chronological order.
     # --------------------------------------------------------
 
     result.sort(
         key=lambda observation: (
-            observation.get("period_end", ""),
-            observation.get("quarter", ""),
+            observation.get(
+                "period_end",
+                "",
+            ),
+            observation.get(
+                "quarter",
+                "",
+            ),
         )
     )
 
@@ -746,20 +950,27 @@ def extract_concept_history(
             }
         }
 
-    v0.1 behavior:
-        All units are flattened into one observation list.
+    v0.1 intentionally preserves the original SEC unit
+    on each observation as "_unit".
 
-    Production hardening for unit selection will be added after
-    real SEC validation confirms actual Company Facts behavior.
+    Cross-unit normalization is NOT performed here.
     """
-    if not isinstance(concept_data, dict):
+    if not isinstance(
+        concept_data,
+        dict,
+    ):
         raise ValueError(
             "concept_data must be a dictionary"
         )
 
-    units = concept_data.get("units")
+    units = concept_data.get(
+        "units"
+    )
 
-    if not isinstance(units, dict):
+    if not isinstance(
+        units,
+        dict,
+    ):
         raise ValueError(
             "concept_data.units must be a dictionary"
         )
@@ -767,32 +978,52 @@ def extract_concept_history(
     observations = []
 
     for unit_name, unit_observations in units.items():
-        if not isinstance(unit_observations, list):
+
+        if not isinstance(
+            unit_observations,
+            list,
+        ):
             continue
 
         for observation in unit_observations:
-            if not isinstance(observation, dict):
+
+            if not isinstance(
+                observation,
+                dict,
+            ):
                 continue
 
             copied = observation.copy()
 
-            # Preserve the original SEC unit explicitly.
+            # Preserve SEC unit explicitly.
             copied["_unit"] = unit_name
 
-            observations.append(copied)
+            observations.append(
+                copied
+            )
 
-    annual = extract_annual_history(observations)
-
-    quarterly = extract_quarterly_history(observations)
-
-    standalone_quarters = reconstruct_standalone_quarters(
+    annual = extract_annual_history(
         observations
+    )
+
+    quarterly = extract_quarterly_history(
+        observations
+    )
+
+    standalone_quarters = (
+        reconstruct_standalone_quarters(
+            observations
+        )
     )
 
     return {
         "schema_version": SCHEMA_VERSION,
-        "label": concept_data.get("label"),
-        "description": concept_data.get("description"),
+        "label": concept_data.get(
+            "label"
+        ),
+        "description": concept_data.get(
+            "description"
+        ),
         "annual": annual,
         "quarterly": quarterly,
         "standalone_quarters": standalone_quarters,
@@ -809,185 +1040,263 @@ def validate_history(
     """
     Validate extracted history structure.
 
-    Returns a list of validation errors.
+    Returns a list of validation failure keys.
 
     Empty list means validation passed.
     """
-    errors = []
+    if not isinstance(
+        history,
+        dict,
+    ):
+        return ["history"]
 
-    if not isinstance(history, dict):
-        return ["history must be a dictionary"]
+    failures = []
 
-    required_keys = {
+    required_keys = [
         "schema_version",
         "annual",
         "quarterly",
         "standalone_quarters",
-    }
+    ]
 
     for key in required_keys:
         if key not in history:
-            errors.append(
-                f"missing required key: {key}"
+            failures.append(
+                key
             )
 
-    if errors:
-        return errors
+    if failures:
+        return failures
 
-    if history.get("schema_version") != SCHEMA_VERSION:
-        errors.append(
-            "invalid schema_version"
+    # --------------------------------------------------------
+    # Schema version
+    # --------------------------------------------------------
+
+    if history.get(
+        "schema_version"
+    ) != SCHEMA_VERSION:
+        failures.append(
+            "schema_version"
         )
 
-    if not isinstance(history.get("annual"), list):
-        errors.append(
-            "annual must be a list"
+    # --------------------------------------------------------
+    # Annual
+    # --------------------------------------------------------
+
+    annual = history.get(
+        "annual"
+    )
+
+    if not isinstance(
+        annual,
+        list,
+    ):
+        failures.append(
+            "annual"
         )
 
-    quarterly = history.get("quarterly")
+    # --------------------------------------------------------
+    # Quarterly
+    # --------------------------------------------------------
 
-    if not isinstance(quarterly, dict):
-        errors.append(
-            "quarterly must be a dictionary"
+    quarterly = history.get(
+        "quarterly"
+    )
+
+    if not isinstance(
+        quarterly,
+        dict,
+    ):
+        failures.append(
+            "quarterly"
         )
     else:
-        required_quarterly_keys = {
+        required_quarterly_keys = [
             "q1",
             "ytd_6m",
             "ytd_9m",
             "unknown",
-        }
+        ]
 
         for key in required_quarterly_keys:
+
             if key not in quarterly:
-                errors.append(
-                    f"missing quarterly key: {key}"
+                failures.append(
+                    f"quarterly.{key}"
                 )
 
-            elif not isinstance(quarterly[key], list):
-                errors.append(
-                    f"quarterly.{key} must be a list"
+            elif not isinstance(
+                quarterly[key],
+                list,
+            ):
+                failures.append(
+                    f"quarterly.{key}"
                 )
+
+    # --------------------------------------------------------
+    # Standalone quarters
+    # --------------------------------------------------------
+
+    standalone = history.get(
+        "standalone_quarters"
+    )
 
     if not isinstance(
-        history.get("standalone_quarters"),
+        standalone,
         list,
     ):
-        errors.append(
-            "standalone_quarters must be a list"
+        failures.append(
+            "standalone_quarters"
         )
 
     # --------------------------------------------------------
     # Validate annual records.
     # --------------------------------------------------------
 
-    for index, observation in enumerate(
-        history.get("annual", [])
+    if isinstance(
+        annual,
+        list,
     ):
-        if not isinstance(observation, dict):
-            errors.append(
-                f"annual[{index}] must be a dictionary"
-            )
-            continue
 
-        if not _is_numeric(observation.get("val")):
-            errors.append(
-                f"annual[{index}] has invalid val"
+        for index, observation in enumerate(
+            annual
+        ):
+
+            if not isinstance(
+                observation,
+                dict,
+            ):
+                failures.append(
+                    f"annual[{index}]"
+                )
+                continue
+
+            value = _get_observation_value(
+                observation
             )
 
-        if not is_duration_observation(observation):
-            errors.append(
-                f"annual[{index}] has invalid duration"
-            )
+            if not _is_numeric(
+                value
+            ):
+                failures.append(
+                    f"annual[{index}].value"
+                )
+
+            if not is_duration_observation(
+                observation
+            ):
+                failures.append(
+                    f"annual[{index}].duration"
+                )
 
     # --------------------------------------------------------
     # Validate quarterly records.
     # --------------------------------------------------------
 
-    quarterly = history.get("quarterly", {})
+    if isinstance(
+        quarterly,
+        dict,
+    ):
 
-    if isinstance(quarterly, dict):
         for key, records in quarterly.items():
-            if not isinstance(records, list):
+
+            if not isinstance(
+                records,
+                list,
+            ):
                 continue
 
-            for index, observation in enumerate(records):
-                if not isinstance(observation, dict):
-                    errors.append(
-                        f"quarterly.{key}[{index}] "
-                        "must be a dictionary"
+            for index, observation in enumerate(
+                records
+            ):
+
+                if not isinstance(
+                    observation,
+                    dict,
+                ):
+                    failures.append(
+                        f"quarterly.{key}[{index}]"
                     )
                     continue
 
+                value = _get_observation_value(
+                    observation
+                )
+
                 if not _is_numeric(
-                    observation.get("val")
+                    value
                 ):
-                    errors.append(
-                        f"quarterly.{key}[{index}] "
-                        "has invalid val"
+                    failures.append(
+                        f"quarterly.{key}[{index}].value"
                     )
 
                 if not is_duration_observation(
                     observation
                 ):
-                    errors.append(
-                        f"quarterly.{key}[{index}] "
-                        "has invalid duration"
+                    failures.append(
+                        f"quarterly.{key}[{index}].duration"
                     )
 
     # --------------------------------------------------------
     # Validate standalone quarters.
     # --------------------------------------------------------
 
-    standalone = history.get(
-        "standalone_quarters",
-        [],
-    )
+    if isinstance(
+        standalone,
+        list,
+    ):
 
-    for index, quarter in enumerate(standalone):
-        if not isinstance(quarter, dict):
-            errors.append(
-                f"standalone_quarters[{index}] "
-                "must be a dictionary"
-            )
-            continue
-
-        if quarter.get("quarter") not in {
-            "Q1",
-            "Q2",
-            "Q3",
-            "Q4",
-        }:
-            errors.append(
-                f"standalone_quarters[{index}] "
-                "has invalid quarter"
-            )
-
-        if not _is_numeric(
-            quarter.get("value")
+        for index, quarter in enumerate(
+            standalone
         ):
-            errors.append(
-                f"standalone_quarters[{index}] "
-                "has invalid value"
-            )
 
-        if _parse_date(
-            quarter.get("period_start")
-        ) is None:
-            errors.append(
-                f"standalone_quarters[{index}] "
-                "has invalid period_start"
-            )
+            if not isinstance(
+                quarter,
+                dict,
+            ):
+                failures.append(
+                    f"standalone_quarters[{index}]"
+                )
+                continue
 
-        if _parse_date(
-            quarter.get("period_end")
-        ) is None:
-            errors.append(
-                f"standalone_quarters[{index}] "
-                "has invalid period_end"
-            )
+            if quarter.get(
+                "quarter"
+            ) not in {
+                "Q1",
+                "Q2",
+                "Q3",
+                "Q4",
+            }:
+                failures.append(
+                    f"standalone_quarters[{index}].quarter"
+                )
 
-    return errors
+            if not _is_numeric(
+                quarter.get("value")
+            ):
+                failures.append(
+                    f"standalone_quarters[{index}].value"
+                )
+
+            if _parse_date(
+                quarter.get(
+                    "period_start"
+                )
+            ) is None:
+                failures.append(
+                    f"standalone_quarters[{index}].period_start"
+                )
+
+            if _parse_date(
+                quarter.get(
+                    "period_end"
+                )
+            ) is None:
+                failures.append(
+                    f"standalone_quarters[{index}].period_end"
+                )
+
+    return failures
 
 
 # ============================================================
