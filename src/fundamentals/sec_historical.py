@@ -698,6 +698,26 @@ def _select_direct_quarter(
     observations,
     quarter,
 ):
+    """
+    Select a direct standalone quarterly observation.
+
+    Q1 / Q2 / Q3:
+        fp must match the requested quarter.
+
+    Q4:
+        SEC Company Facts may represent a standalone Q4
+        observation with fp="FY" rather than fp="Q4".
+
+        Therefore Q4 accepts:
+            - fp="Q4"
+            - fp="FY"
+
+        as long as the observation itself is a standalone
+        quarterly duration (70-120 days).
+
+    This function never reconstructs a quarter.
+    """
+
     candidates = []
 
     for observation in observations:
@@ -709,7 +729,22 @@ def _select_direct_quarter(
 
         fp = observation.get("fp")
 
-        if fp != quarter:
+        if quarter in (
+            "Q1",
+            "Q2",
+            "Q3",
+        ):
+            if fp != quarter:
+                continue
+
+        elif quarter == "Q4":
+            if fp not in (
+                "Q4",
+                "FY",
+            ):
+                continue
+
+        else:
             continue
 
         candidates.append(
@@ -952,6 +987,19 @@ def extract_quarterly_history(
     )
 
     if selected is None:
+
+        if metric_name == "diluted_eps":
+            return {
+                "status": "MISSING",
+                "metric": metric_name,
+                "quarterly": [],
+                "reason": (
+                    "No usable diluted EPS concept found. "
+                    "EPS reconstruction is disabled "
+                    "in v0.1."
+                ),
+            }
+
         return {
             "status": "MISSING",
             "metric": metric_name,
