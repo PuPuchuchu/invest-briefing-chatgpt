@@ -63,7 +63,6 @@ CONCEPT_MAP = {
 # METRIC GROUPS
 # ============================================================
 
-# These metrics are duration-based.
 DURATION_METRICS = [
     "revenue",
     "net_income",
@@ -73,7 +72,6 @@ DURATION_METRICS = [
     "capex",
 ]
 
-# These metrics are instant-based.
 INSTANT_METRICS = [
     "cash",
     "current_debt",
@@ -274,24 +272,56 @@ def _deduplicate_period_observations(observations, instant=False):
     """
     Keep the latest filed observation for the same economic period.
 
+    Supports both:
+
+        1. Raw SEC observations
+           start / end
+
+        2. Built historical records
+           period_start / period_end
+
     Duration identity:
-        start + end + fy + fp
+        period_start + period_end + fy + fp
 
     Instant identity:
-        end
+        period_end
     """
 
     selected = {}
 
     for observation in observations:
+
+        # ----------------------------------------------------
+        # Determine period identity
+        # ----------------------------------------------------
+
         if instant:
-            identity = (
-                _date_string(observation.get("end")),
+            period_end = (
+                observation.get("end")
+                if observation.get("end") is not None
+                else observation.get("period_end")
             )
-        else:
+
             identity = (
-                _date_string(observation.get("start")),
-                _date_string(observation.get("end")),
+                _date_string(period_end),
+            )
+
+        else:
+            period_start = (
+                observation.get("start")
+                if observation.get("start") is not None
+                else observation.get("period_start")
+            )
+
+            period_end = (
+                observation.get("end")
+                if observation.get("end") is not None
+                else observation.get("period_end")
+            )
+
+            identity = (
+                _date_string(period_start),
+                _date_string(period_end),
                 observation.get("fy"),
                 observation.get("fp"),
             )
@@ -302,14 +332,46 @@ def _deduplicate_period_observations(observations, instant=False):
             selected[identity] = observation
             continue
 
-        current_filed = _date_string(observation.get("filed")) or ""
-        existing_filed = _date_string(existing.get("filed")) or ""
+        # ----------------------------------------------------
+        # Latest filing wins
+        # ----------------------------------------------------
+
+        current_filed = (
+            _date_string(
+                observation.get("filed")
+                if observation.get("filed") is not None
+                else observation.get("filing_date")
+            )
+            or ""
+        )
+
+        existing_filed = (
+            _date_string(
+                existing.get("filed")
+                if existing.get("filed") is not None
+                else existing.get("filing_date")
+            )
+            or ""
+        )
 
         if current_filed > existing_filed:
             selected[identity] = observation
+
         elif current_filed == existing_filed:
-            current_accn = observation.get("accn") or ""
-            existing_accn = existing.get("accn") or ""
+
+            current_accn = (
+                observation.get("accn")
+                if observation.get("accn") is not None
+                else observation.get("accession")
+                or ""
+            )
+
+            existing_accn = (
+                existing.get("accn")
+                if existing.get("accn") is not None
+                else existing.get("accession")
+                or ""
+            )
 
             if current_accn > existing_accn:
                 selected[identity] = observation
@@ -321,17 +383,28 @@ def _deduplicate_period_observations(observations, instant=False):
 # CONCEPT SELECTION
 # ============================================================
 
-def find_best_concept(data, metric_name, duration=False, instant=False):
-    candidates = CONCEPT_MAP.get(metric_name, [])
+def find_best_concept(
+    data,
+    metric_name,
+    duration=False,
+    instant=False,
+):
+    candidates = CONCEPT_MAP.get(
+        metric_name,
+        [],
+    )
 
     for namespace, concept in candidates:
+
         concept_data = get_concept_data(
             data,
             namespace,
             concept,
         )
 
-        observations = get_observations(concept_data)
+        observations = get_observations(
+            concept_data
+        )
 
         if duration:
             usable = [
@@ -339,12 +412,14 @@ def find_best_concept(data, metric_name, duration=False, instant=False):
                 for obs in observations
                 if _is_usable_duration_observation(obs)
             ]
+
         elif instant:
             usable = [
                 obs
                 for obs in observations
                 if _is_usable_instant_observation(obs)
             ]
+
         else:
             usable = observations
 
@@ -392,7 +467,9 @@ def build_record(
         "unit": observation.get("unit"),
         "namespace": observation.get("_namespace"),
         "concept": observation.get("_concept"),
-        "filing_date": _date_string(observation.get("filed")),
+        "filing_date": _date_string(
+            observation.get("filed")
+        ),
         "form": observation.get("form"),
         "fp": observation.get("fp"),
         "frame": observation.get("frame"),
@@ -409,7 +486,11 @@ def build_record(
     return record
 
 
-def _attach_concept_metadata(observations, namespace, concept):
+def _attach_concept_metadata(
+    observations,
+    namespace,
+    concept,
+):
     result = []
 
     for observation in observations:
@@ -425,7 +506,10 @@ def _attach_concept_metadata(observations, namespace, concept):
 # ANNUAL EXTRACTION
 # ============================================================
 
-def extract_annual_history(data, metric_name):
+def extract_annual_history(
+    data,
+    metric_name,
+):
     selected = find_best_concept(
         data,
         metric_name,
@@ -449,13 +533,16 @@ def extract_annual_history(data, metric_name):
     annual = []
 
     for observation in observations:
+
         if observation.get("form") != "10-K":
             continue
 
         if observation.get("fp") != "FY":
             continue
 
-        days = _duration_days(observation)
+        days = _duration_days(
+            observation
+        )
 
         # Annual duration should normally be ~9-15 months.
         if days is None or days < 300:
@@ -470,13 +557,7 @@ def extract_annual_history(data, metric_name):
         )
 
     annual = _deduplicate_period_observations(
-        [
-            {
-                **record,
-                "_original_observation": True,
-            }
-            for record in annual
-        ],
+        annual,
         instant=False,
     )
 
@@ -487,15 +568,14 @@ def extract_annual_history(data, metric_name):
         )
     )
 
-    for record in annual:
-        record.pop("_original_observation", None)
-
     if not annual:
         return {
             "status": "MISSING",
             "metric": metric_name,
             "annual": [],
-            "reason": "No usable 10-K FY annual observations found.",
+            "reason": (
+                "No usable 10-K FY annual observations found."
+            ),
         }
 
     return {
@@ -511,7 +591,10 @@ def extract_annual_history(data, metric_name):
 # INSTANT EXTRACTION
 # ============================================================
 
-def extract_instant_history(data, metric_name):
+def extract_instant_history(
+    data,
+    metric_name,
+):
     selected = find_best_concept(
         data,
         metric_name,
@@ -569,7 +652,9 @@ def extract_instant_history(data, metric_name):
 # ============================================================
 
 def _is_standalone_quarter(observation):
-    days = _duration_days(observation)
+    days = _duration_days(
+        observation
+    )
 
     if days is None:
         return False
@@ -579,7 +664,9 @@ def _is_standalone_quarter(observation):
 
 
 def _is_ytd_observation(observation):
-    days = _duration_days(observation)
+    days = _duration_days(
+        observation
+    )
 
     if days is None:
         return False
@@ -607,11 +694,17 @@ def _select_latest(records):
 # QUARTER SELECTION
 # ============================================================
 
-def _select_direct_quarter(observations, quarter):
+def _select_direct_quarter(
+    observations,
+    quarter,
+):
     candidates = []
 
     for observation in observations:
-        if not _is_standalone_quarter(observation):
+
+        if not _is_standalone_quarter(
+            observation
+        ):
             continue
 
         fp = observation.get("fp")
@@ -619,12 +712,19 @@ def _select_direct_quarter(observations, quarter):
         if fp != quarter:
             continue
 
-        candidates.append(observation)
+        candidates.append(
+            observation
+        )
 
-    return _select_latest(candidates)
+    return _select_latest(
+        candidates
+    )
 
 
-def _select_ytd(observations, quarter):
+def _select_ytd(
+    observations,
+    quarter,
+):
     """
     Select cumulative YTD observation.
 
@@ -636,65 +736,100 @@ def _select_ytd(observations, quarter):
     candidates = []
 
     for observation in observations:
-        if not _is_ytd_observation(observation):
+
+        if not _is_ytd_observation(
+            observation
+        ):
             continue
 
         fp = observation.get("fp")
 
         if quarter == "Q2":
+
             if fp == "Q2":
-                candidates.append(observation)
+                candidates.append(
+                    observation
+                )
 
         elif quarter == "Q3":
-            if fp == "Q3":
-                candidates.append(observation)
 
-    return _select_latest(candidates)
+            if fp == "Q3":
+                candidates.append(
+                    observation
+                )
+
+    return _select_latest(
+        candidates
+    )
 
 
 def _select_q1(observations):
-    return _select_direct_quarter(observations, "Q1")
+    return _select_direct_quarter(
+        observations,
+        "Q1",
+    )
 
 
 def _select_q2(observations):
-    return _select_direct_quarter(observations, "Q2")
+    return _select_direct_quarter(
+        observations,
+        "Q2",
+    )
 
 
 def _select_q3(observations):
-    return _select_direct_quarter(observations, "Q3")
+    return _select_direct_quarter(
+        observations,
+        "Q3",
+    )
 
 
 def _select_fy(observations):
     candidates = []
 
     for observation in observations:
+
         if observation.get("form") != "10-K":
             continue
 
         if observation.get("fp") != "FY":
             continue
 
-        days = _duration_days(observation)
+        days = _duration_days(
+            observation
+        )
 
         if days is None or days < 300:
             continue
 
-        candidates.append(observation)
+        candidates.append(
+            observation
+        )
 
-    return _select_latest(candidates)
+    return _select_latest(
+        candidates
+    )
 
 
 # ============================================================
 # SOURCE RECORD
 # ============================================================
 
-def _source_record(observation):
+def _source_record(
+    observation,
+):
     return {
-        "period_start": _date_string(observation.get("start")),
-        "period_end": _date_string(observation.get("end")),
+        "period_start": _date_string(
+            observation.get("start")
+        ),
+        "period_end": _date_string(
+            observation.get("end")
+        ),
         "value": observation.get("val"),
         "unit": observation.get("unit"),
-        "filing_date": _date_string(observation.get("filed")),
+        "filing_date": _date_string(
+            observation.get("filed")
+        ),
         "form": observation.get("form"),
         "fy": observation.get("fy"),
         "fp": observation.get("fp"),
@@ -739,22 +874,39 @@ def _build_derived_quarter(
     if subtract_observation is None:
         return None
 
-    current_value = current_observation.get("val")
-    subtract_value = subtract_observation.get("val")
+    current_value = (
+        current_observation.get("val")
+    )
 
-    if not _is_number(current_value):
+    subtract_value = (
+        subtract_observation.get("val")
+    )
+
+    if not _is_number(
+        current_value
+    ):
         return None
 
-    if not _is_number(subtract_value):
+    if not _is_number(
+        subtract_value
+    ):
         return None
 
-    current_unit = current_observation.get("unit")
-    subtract_unit = subtract_observation.get("unit")
+    current_unit = (
+        current_observation.get("unit")
+    )
+
+    subtract_unit = (
+        subtract_observation.get("unit")
+    )
 
     if current_unit != subtract_unit:
         return None
 
-    value = current_value - subtract_value
+    value = (
+        current_value
+        - subtract_value
+    )
 
     record = build_record(
         observation=current_observation,
@@ -769,8 +921,12 @@ def _build_derived_quarter(
             f"{subtract_observation.get('fp') or 'previous'}"
         ),
         source_observations=[
-            _source_record(current_observation),
-            _source_record(subtract_observation),
+            _source_record(
+                current_observation
+            ),
+            _source_record(
+                subtract_observation
+            ),
         ],
         period_start=period_start,
         period_end=period_end,
@@ -785,7 +941,10 @@ def _build_derived_quarter(
 # QUARTERLY EXTRACTION
 # ============================================================
 
-def extract_quarterly_history(data, metric_name):
+def extract_quarterly_history(
+    data,
+    metric_name,
+):
     selected = find_best_concept(
         data,
         metric_name,
@@ -809,20 +968,28 @@ def extract_quarterly_history(data, metric_name):
     # --------------------------------------------------------
     # EPS SPECIAL CASE
     # --------------------------------------------------------
-    #
+
     # EPS cannot be reconstructed by:
     #
     #   H1 EPS - Q1 EPS
     #
-    # because EPS is a ratio/per-share metric, not an additive
-    # cumulative flow.
+    # because EPS is a ratio/per-share metric,
+    # not an additive cumulative flow.
     #
-    # Therefore v0.1 accepts direct standalone quarterly EPS only.
-    #
+    # Therefore v0.1 accepts direct standalone
+    # quarterly EPS only.
+
     if metric_name == "diluted_eps":
+
         quarters = []
 
-        for quarter in ("Q1", "Q2", "Q3", "Q4"):
+        for quarter in (
+            "Q1",
+            "Q2",
+            "Q3",
+            "Q4",
+        ):
+
             direct = _select_direct_quarter(
                 observations,
                 quarter,
@@ -854,8 +1021,9 @@ def extract_quarterly_history(data, metric_name):
                 "metric": metric_name,
                 "quarterly": [],
                 "reason": (
-                    "No direct standalone quarterly EPS observations "
-                    "were available. EPS reconstruction is disabled "
+                    "No direct standalone quarterly EPS "
+                    "observations were available. "
+                    "EPS reconstruction is disabled "
                     "in v0.1."
                 ),
             }
@@ -878,9 +1046,12 @@ def extract_quarterly_history(data, metric_name):
     # Q1
     # --------------------------------------------------------
 
-    q1 = _select_q1(observations)
+    q1 = _select_q1(
+        observations
+    )
 
     if q1 is not None:
+
         quarterly.append(
             build_record(
                 observation=q1,
@@ -895,9 +1066,12 @@ def extract_quarterly_history(data, metric_name):
     # Q2
     # --------------------------------------------------------
 
-    q2_direct = _select_q2(observations)
+    q2_direct = _select_q2(
+        observations
+    )
 
     if q2_direct is not None:
+
         quarterly.append(
             build_record(
                 observation=q2_direct,
@@ -907,12 +1081,26 @@ def extract_quarterly_history(data, metric_name):
                 derived=False,
             )
         )
-    elif metric_name in RECONSTRUCTABLE_QUARTERLY_METRICS:
-        q2_ytd = _select_ytd(observations, "Q2")
 
-        if q2_ytd is not None and q1 is not None:
-            period_start = _day_after(q1.get("end"))
-            period_end = _date_string(q2_ytd.get("end"))
+    elif metric_name in RECONSTRUCTABLE_QUARTERLY_METRICS:
+
+        q2_ytd = _select_ytd(
+            observations,
+            "Q2",
+        )
+
+        if (
+            q2_ytd is not None
+            and q1 is not None
+        ):
+
+            period_start = _day_after(
+                q1.get("end")
+            )
+
+            period_end = _date_string(
+                q2_ytd.get("end")
+            )
 
             derived_q2 = _build_derived_quarter(
                 metric_name=metric_name,
@@ -924,15 +1112,20 @@ def extract_quarterly_history(data, metric_name):
             )
 
             if derived_q2 is not None:
-                quarterly.append(derived_q2)
+                quarterly.append(
+                    derived_q2
+                )
 
     # --------------------------------------------------------
     # Q3
     # --------------------------------------------------------
 
-    q3_direct = _select_q3(observations)
+    q3_direct = _select_q3(
+        observations
+    )
 
     if q3_direct is not None:
+
         quarterly.append(
             build_record(
                 observation=q3_direct,
@@ -942,15 +1135,32 @@ def extract_quarterly_history(data, metric_name):
                 derived=False,
             )
         )
+
     elif metric_name in RECONSTRUCTABLE_QUARTERLY_METRICS:
-        q3_ytd = _select_ytd(observations, "Q3")
+
+        q3_ytd = _select_ytd(
+            observations,
+            "Q3",
+        )
 
         # H1 observation is needed for Q3 reconstruction.
-        q2_ytd = _select_ytd(observations, "Q2")
+        q2_ytd = _select_ytd(
+            observations,
+            "Q2",
+        )
 
-        if q3_ytd is not None and q2_ytd is not None:
-            period_start = _day_after(q2_ytd.get("end"))
-            period_end = _date_string(q3_ytd.get("end"))
+        if (
+            q3_ytd is not None
+            and q2_ytd is not None
+        ):
+
+            period_start = _day_after(
+                q2_ytd.get("end")
+            )
+
+            period_end = _date_string(
+                q3_ytd.get("end")
+            )
 
             derived_q3 = _build_derived_quarter(
                 metric_name=metric_name,
@@ -962,20 +1172,37 @@ def extract_quarterly_history(data, metric_name):
             )
 
             if derived_q3 is not None:
-                quarterly.append(derived_q3)
+                quarterly.append(
+                    derived_q3
+                )
 
     # --------------------------------------------------------
     # Q4
     # --------------------------------------------------------
 
-    fy = _select_fy(observations)
+    fy = _select_fy(
+        observations
+    )
 
-    if fy is not None and metric_name in RECONSTRUCTABLE_QUARTERLY_METRICS:
-        q3_ytd = _select_ytd(observations, "Q3")
+    if (
+        fy is not None
+        and metric_name in RECONSTRUCTABLE_QUARTERLY_METRICS
+    ):
+
+        q3_ytd = _select_ytd(
+            observations,
+            "Q3",
+        )
 
         if q3_ytd is not None:
-            period_start = _day_after(q3_ytd.get("end"))
-            period_end = _date_string(fy.get("end"))
+
+            period_start = _day_after(
+                q3_ytd.get("end")
+            )
+
+            period_end = _date_string(
+                fy.get("end")
+            )
 
             derived_q4 = _build_derived_quarter(
                 metric_name=metric_name,
@@ -987,7 +1214,9 @@ def extract_quarterly_history(data, metric_name):
             )
 
             if derived_q4 is not None:
-                quarterly.append(derived_q4)
+                quarterly.append(
+                    derived_q4
+                )
 
     # --------------------------------------------------------
     # Deduplicate quarterly records
@@ -996,26 +1225,42 @@ def extract_quarterly_history(data, metric_name):
     unique = {}
 
     for record in quarterly:
+
         identity = (
             record.get("fy"),
             record.get("quarter"),
             record.get("period_end"),
         )
 
-        existing = unique.get(identity)
+        existing = unique.get(
+            identity
+        )
 
         if existing is None:
             unique[identity] = record
             continue
 
-        # Prefer direct SEC quarterly observation over derived.
-        existing_derived = existing.get("derived", False)
-        current_derived = record.get("derived", False)
+        # Prefer direct SEC quarterly observation
+        # over derived.
+        existing_derived = existing.get(
+            "derived",
+            False,
+        )
 
-        if existing_derived and not current_derived:
+        current_derived = record.get(
+            "derived",
+            False,
+        )
+
+        if (
+            existing_derived
+            and not current_derived
+        ):
             unique[identity] = record
 
-    quarterly = list(unique.values())
+    quarterly = list(
+        unique.values()
+    )
 
     quarterly.sort(
         key=lambda x: (
@@ -1029,7 +1274,9 @@ def extract_quarterly_history(data, metric_name):
             "status": "MISSING",
             "metric": metric_name,
             "quarterly": [],
-            "reason": "No usable quarterly observations found.",
+            "reason": (
+                "No usable quarterly observations found."
+            ),
         }
 
     return {
@@ -1050,11 +1297,14 @@ def extract_historical_data(
     data,
     company_type="NON_FINANCIAL",
 ):
-    validate_companyfacts(data)
+    validate_companyfacts(
+        data
+    )
 
     history = {}
 
     for metric in DURATION_METRICS:
+
         annual = extract_annual_history(
             data,
             metric,
@@ -1066,52 +1316,106 @@ def extract_historical_data(
         )
 
         history[metric] = {
-            "annual": annual.get("annual", []),
-            "quarterly": quarterly.get("quarterly", []),
+            "annual": annual.get(
+                "annual",
+                [],
+            ),
+            "quarterly": quarterly.get(
+                "quarterly",
+                [],
+            ),
             "status": (
                 "OK"
                 if (
-                    annual.get("status") == "OK"
-                    or quarterly.get("status") == "OK"
+                    annual.get("status")
+                    == "OK"
+                    or quarterly.get("status")
+                    == "OK"
                 )
                 else "MISSING"
             ),
         }
 
-        if annual.get("namespace"):
-            history[metric]["namespace"] = annual["namespace"]
+        if annual.get(
+            "namespace"
+        ):
+            history[metric][
+                "namespace"
+            ] = annual[
+                "namespace"
+            ]
 
-        if annual.get("concept"):
-            history[metric]["concept"] = annual["concept"]
+        if annual.get(
+            "concept"
+        ):
+            history[metric][
+                "concept"
+            ] = annual[
+                "concept"
+            ]
 
-        if quarterly.get("reason"):
-            history[metric]["quarterly_reason"] = quarterly["reason"]
+        if quarterly.get(
+            "reason"
+        ):
+            history[metric][
+                "quarterly_reason"
+            ] = quarterly[
+                "reason"
+            ]
 
     for metric in INSTANT_METRICS:
+
         instant = extract_instant_history(
             data,
             metric,
         )
 
         history[metric] = {
-            "instant": instant.get("instant", []),
-            "status": instant.get("status"),
+            "instant": instant.get(
+                "instant",
+                [],
+            ),
+            "status": instant.get(
+                "status"
+            ),
         }
 
-        if instant.get("namespace"):
-            history[metric]["namespace"] = instant["namespace"]
+        if instant.get(
+            "namespace"
+        ):
+            history[metric][
+                "namespace"
+            ] = instant[
+                "namespace"
+            ]
 
-        if instant.get("concept"):
-            history[metric]["concept"] = instant["concept"]
+        if instant.get(
+            "concept"
+        ):
+            history[metric][
+                "concept"
+            ] = instant[
+                "concept"
+            ]
 
-        if instant.get("reason"):
-            history[metric]["reason"] = instant["reason"]
+        if instant.get(
+            "reason"
+        ):
+            history[metric][
+                "reason"
+            ] = instant[
+                "reason"
+            ]
 
     return {
         "schema_version": SCHEMA_VERSION,
         "ticker": ticker,
-        "entity_name": data.get("entityName"),
-        "cik": data.get("cik"),
+        "entity_name": data.get(
+            "entityName"
+        ),
+        "cik": data.get(
+            "cik"
+        ),
         "company_type": company_type,
         "source": {
             "provider": "SEC",
@@ -1132,7 +1436,10 @@ def load_raw_companyfacts(
     ticker,
     raw_dir=RAW_DIR,
 ):
-    path = Path(raw_dir) / f"{ticker}_companyfacts.json"
+    path = (
+        Path(raw_dir)
+        / f"{ticker}_companyfacts.json"
+    )
 
     if not path.exists():
         raise FileNotFoundError(
@@ -1145,7 +1452,9 @@ def load_raw_companyfacts(
     ) as f:
         data = json.load(f)
 
-    validate_companyfacts(data)
+    validate_companyfacts(
+        data
+    )
 
     return data
 
@@ -1155,7 +1464,10 @@ def save_historical_data(
     historical_data,
     processed_dir=PROCESSED_DIR,
 ):
-    processed_dir = Path(processed_dir)
+    processed_dir = Path(
+        processed_dir
+    )
+
     processed_dir.mkdir(
         parents=True,
         exist_ok=True,
@@ -1170,6 +1482,7 @@ def save_historical_data(
         "w",
         encoding="utf-8",
     ) as f:
+
         json.dump(
             historical_data,
             f,
@@ -1214,13 +1527,20 @@ def extract_from_cache(
 # VALIDATION
 # ============================================================
 
-def validate_historical_data(data):
-    if not isinstance(data, dict):
+def validate_historical_data(
+    data,
+):
+    if not isinstance(
+        data,
+        dict,
+    ):
         raise ValueError(
             "Historical data must be a dict."
         )
 
-    if data.get("schema_version") != SCHEMA_VERSION:
+    if data.get(
+        "schema_version"
+    ) != SCHEMA_VERSION:
         raise ValueError(
             "Unexpected historical schema version."
         )
@@ -1235,60 +1555,98 @@ def validate_historical_data(data):
     ]
 
     for key in required_top_level:
+
         if key not in data:
             raise ValueError(
                 f"Missing required historical key: {key}"
             )
 
-    if not isinstance(data["history"], dict):
+    if not isinstance(
+        data["history"],
+        dict,
+    ):
         raise ValueError(
             "Historical 'history' must be a dict."
         )
 
     for metric in DURATION_METRICS:
+
         if metric not in data["history"]:
             raise ValueError(
                 f"Missing duration metric history: {metric}"
             )
 
-        metric_data = data["history"][metric]
+        metric_data = data[
+            "history"
+        ][metric]
 
-        if not isinstance(metric_data, dict):
+        if not isinstance(
+            metric_data,
+            dict,
+        ):
             raise ValueError(
                 f"Invalid history object: {metric}"
             )
 
-        annual = metric_data.get("annual", [])
-        quarterly = metric_data.get("quarterly", [])
+        annual = metric_data.get(
+            "annual",
+            [],
+        )
 
-        if not isinstance(annual, list):
+        quarterly = metric_data.get(
+            "quarterly",
+            [],
+        )
+
+        if not isinstance(
+            annual,
+            list,
+        ):
             raise ValueError(
                 f"{metric}.annual must be a list."
             )
 
-        if not isinstance(quarterly, list):
+        if not isinstance(
+            quarterly,
+            list,
+        ):
             raise ValueError(
                 f"{metric}.quarterly must be a list."
             )
 
-        for record in annual + quarterly:
-            if not isinstance(record, dict):
+        for record in (
+            annual + quarterly
+        ):
+
+            if not isinstance(
+                record,
+                dict,
+            ):
                 raise ValueError(
                     f"Invalid {metric} history record."
                 )
 
-            if record.get("period_end") is None:
+            if record.get(
+                "period_end"
+            ) is None:
                 raise ValueError(
                     f"{metric} record missing period_end."
                 )
 
-            if record.get("value") is None:
+            if record.get(
+                "value"
+            ) is None:
                 raise ValueError(
                     f"{metric} record missing value."
                 )
 
-            if record.get("period_type") == "quarterly":
-                if record.get("quarter") not in {
+            if record.get(
+                "period_type"
+            ) == "quarterly":
+
+                if record.get(
+                    "quarter"
+                ) not in {
                     "Q1",
                     "Q2",
                     "Q3",
@@ -1299,14 +1657,19 @@ def validate_historical_data(data):
                         f"has invalid quarter."
                     )
 
-                if record.get("period_start") is None:
+                if record.get(
+                    "period_start"
+                ) is None:
                     raise ValueError(
                         f"{metric} quarterly record "
                         f"missing period_start."
                     )
 
                 # Derived quarterly records must contain provenance.
-                if record.get("derived") is True:
+                if record.get(
+                    "derived"
+                ) is True:
+
                     if not record.get(
                         "source_observations"
                     ):
@@ -1316,38 +1679,58 @@ def validate_historical_data(data):
                         )
 
     for metric in INSTANT_METRICS:
+
         if metric not in data["history"]:
             raise ValueError(
                 f"Missing instant metric history: {metric}"
             )
 
-        metric_data = data["history"][metric]
+        metric_data = data[
+            "history"
+        ][metric]
 
-        if not isinstance(metric_data, dict):
+        if not isinstance(
+            metric_data,
+            dict,
+        ):
             raise ValueError(
                 f"Invalid instant history object: {metric}"
             )
 
-        instant = metric_data.get("instant", [])
+        instant = metric_data.get(
+            "instant",
+            [],
+        )
 
-        if not isinstance(instant, list):
+        if not isinstance(
+            instant,
+            list,
+        ):
             raise ValueError(
                 f"{metric}.instant must be a list."
             )
 
         for record in instant:
-            if not isinstance(record, dict):
+
+            if not isinstance(
+                record,
+                dict,
+            ):
                 raise ValueError(
                     f"Invalid {metric} instant record."
                 )
 
-            if record.get("period_end") is None:
+            if record.get(
+                "period_end"
+            ) is None:
                 raise ValueError(
                     f"{metric} instant record "
                     f"missing period_end."
                 )
 
-            if record.get("value") is None:
+            if record.get(
+                "value"
+            ) is None:
                 raise ValueError(
                     f"{metric} instant record "
                     f"missing value."
@@ -1361,10 +1744,13 @@ def validate_historical_data(data):
 # ============================================================
 
 if __name__ == "__main__":
+
     import argparse
 
     parser = argparse.ArgumentParser(
-        description="Extract SEC historical financial data."
+        description=(
+            "Extract SEC historical financial data."
+        )
     )
 
     parser.add_argument(
