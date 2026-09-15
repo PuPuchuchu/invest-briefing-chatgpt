@@ -1,21 +1,8 @@
-import sys
-from pathlib import Path
-
-
-# ============================================================
-# TEST PATH CONFIGURATION
-# ============================================================
-
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-SRC_DIR = PROJECT_ROOT / "src"
-
-if str(SRC_DIR) not in sys.path:
-    sys.path.insert(0, str(SRC_DIR))
-
-
-from fundamentals.quality import (
+from src.fundamentals.quality import (
     QUALITY_METRICS,
-    QUALITY_WEIGHTS,
+    calculate_fcf_conversion,
+    calculate_net_debt_to_fcf,
+    calculate_profit_to_cash_consistency,
     calculate_quality,
     rate_operating_margin,
     rate_net_margin,
@@ -39,6 +26,13 @@ def _ok_metric(value):
     }
 
 
+def _missing_metric():
+    return {
+        "status": "MISSING",
+        "value": None,
+    }
+
+
 def _build_derived(
     *,
     operating_margin=0.20,
@@ -52,12 +46,24 @@ def _build_derived(
         "schema_version": "derived_metrics_v0.1",
         "ticker": "TEST",
         "derived_metrics": {
-            "operating_margin": _ok_metric(operating_margin),
-            "net_margin": _ok_metric(net_margin),
-            "fcf_margin": _ok_metric(fcf_margin),
-            "fcf": _ok_metric(fcf),
-            "net_debt": _ok_metric(net_debt),
-            "debt_to_cash": _ok_metric(debt_to_cash),
+            "operating_margin": _ok_metric(
+                operating_margin
+            ),
+            "net_margin": _ok_metric(
+                net_margin
+            ),
+            "fcf_margin": _ok_metric(
+                fcf_margin
+            ),
+            "fcf": _ok_metric(
+                fcf
+            ),
+            "net_debt": _ok_metric(
+                net_debt
+            ),
+            "debt_to_cash": _ok_metric(
+                debt_to_cash
+            ),
         },
     }
 
@@ -72,7 +78,9 @@ def _build_normalized(
         "ticker": "TEST",
         "company_type": company_type,
         "metrics": {
-            "net_income": _ok_metric(net_income),
+            "net_income": _ok_metric(
+                net_income
+            ),
         },
     }
 
@@ -95,93 +103,171 @@ def test_quality_metrics_configuration():
     assert set(QUALITY_METRICS) == expected_metrics
 
 
-def test_quality_weights_sum_to_one():
-    assert abs(sum(QUALITY_WEIGHTS.values()) - 1.0) < 1e-9
-
-
-def test_quality_weights_cover_all_metrics():
-    assert set(QUALITY_WEIGHTS.keys()) == set(QUALITY_METRICS)
-
-
 # ============================================================
 # STAR THRESHOLD TESTS
 # ============================================================
 
 def test_operating_margin_thresholds():
-    assert rate_operating_margin(0.049) == 1
-    assert rate_operating_margin(0.05) == 2
-    assert rate_operating_margin(0.099) == 2
-    assert rate_operating_margin(0.10) == 3
-    assert rate_operating_margin(0.199) == 3
-    assert rate_operating_margin(0.20) == 4
-    assert rate_operating_margin(0.299) == 4
-    assert rate_operating_margin(0.30) == 5
+    assert rate_operating_margin(0.049)["stars"] == 1
+    assert rate_operating_margin(0.05)["stars"] == 2
+    assert rate_operating_margin(0.099)["stars"] == 2
+    assert rate_operating_margin(0.10)["stars"] == 3
+    assert rate_operating_margin(0.199)["stars"] == 3
+    assert rate_operating_margin(0.20)["stars"] == 4
+    assert rate_operating_margin(0.299)["stars"] == 4
+    assert rate_operating_margin(0.30)["stars"] == 5
 
 
 def test_net_margin_thresholds():
-    assert rate_net_margin(0.019) == 1
-    assert rate_net_margin(0.02) == 2
-    assert rate_net_margin(0.059) == 2
-    assert rate_net_margin(0.06) == 3
-    assert rate_net_margin(0.119) == 3
-    assert rate_net_margin(0.12) == 4
-    assert rate_net_margin(0.199) == 4
-    assert rate_net_margin(0.20) == 5
+    assert rate_net_margin(0.019)["stars"] == 1
+    assert rate_net_margin(0.02)["stars"] == 2
+    assert rate_net_margin(0.059)["stars"] == 2
+    assert rate_net_margin(0.06)["stars"] == 3
+    assert rate_net_margin(0.119)["stars"] == 3
+    assert rate_net_margin(0.12)["stars"] == 4
+    assert rate_net_margin(0.199)["stars"] == 4
+    assert rate_net_margin(0.20)["stars"] == 5
 
 
 def test_fcf_margin_thresholds():
-    assert rate_fcf_margin(0.019) == 1
-    assert rate_fcf_margin(0.02) == 2
-    assert rate_fcf_margin(0.059) == 2
-    assert rate_fcf_margin(0.06) == 3
-    assert rate_fcf_margin(0.119) == 3
-    assert rate_fcf_margin(0.12) == 4
-    assert rate_fcf_margin(0.199) == 4
-    assert rate_fcf_margin(0.20) == 5
+    assert rate_fcf_margin(0.019)["stars"] == 1
+    assert rate_fcf_margin(0.02)["stars"] == 2
+    assert rate_fcf_margin(0.059)["stars"] == 2
+    assert rate_fcf_margin(0.06)["stars"] == 3
+    assert rate_fcf_margin(0.119)["stars"] == 3
+    assert rate_fcf_margin(0.12)["stars"] == 4
+    assert rate_fcf_margin(0.199)["stars"] == 4
+    assert rate_fcf_margin(0.20)["stars"] == 5
 
 
 def test_fcf_conversion_thresholds():
-    assert rate_fcf_conversion(0.399) == 1
-    assert rate_fcf_conversion(0.40) == 2
-    assert rate_fcf_conversion(0.599) == 2
-    assert rate_fcf_conversion(0.60) == 3
-    assert rate_fcf_conversion(0.799) == 3
-    assert rate_fcf_conversion(0.80) == 4
-    assert rate_fcf_conversion(0.999) == 4
-    assert rate_fcf_conversion(1.00) == 5
+    assert rate_fcf_conversion(0.399)["stars"] == 1
+    assert rate_fcf_conversion(0.40)["stars"] == 2
+    assert rate_fcf_conversion(0.599)["stars"] == 2
+    assert rate_fcf_conversion(0.60)["stars"] == 3
+    assert rate_fcf_conversion(0.799)["stars"] == 3
+    assert rate_fcf_conversion(0.80)["stars"] == 4
+    assert rate_fcf_conversion(0.999)["stars"] == 4
+    assert rate_fcf_conversion(1.00)["stars"] == 5
 
 
 def test_net_debt_to_fcf_thresholds():
-    assert rate_net_debt_to_fcf(1.0) == 5
-    assert rate_net_debt_to_fcf(1.5) == 4
-    assert rate_net_debt_to_fcf(2.0) == 4
-    assert rate_net_debt_to_fcf(2.5) == 3
-    assert rate_net_debt_to_fcf(3.0) == 3
-    assert rate_net_debt_to_fcf(3.5) == 2
-    assert rate_net_debt_to_fcf(4.0) == 2
-    assert rate_net_debt_to_fcf(4.1) == 1
+    assert rate_net_debt_to_fcf(-1.0)["stars"] == 5
+    assert rate_net_debt_to_fcf(0.0)["stars"] == 5
+    assert rate_net_debt_to_fcf(1.0)["stars"] == 5
+    assert rate_net_debt_to_fcf(1.5)["stars"] == 4
+    assert rate_net_debt_to_fcf(2.0)["stars"] == 4
+    assert rate_net_debt_to_fcf(2.5)["stars"] == 3
+    assert rate_net_debt_to_fcf(3.0)["stars"] == 3
+    assert rate_net_debt_to_fcf(3.5)["stars"] == 2
+    assert rate_net_debt_to_fcf(4.0)["stars"] == 2
+    assert rate_net_debt_to_fcf(4.1)["stars"] == 1
 
 
 def test_debt_to_cash_thresholds():
-    assert rate_debt_to_cash(0.5) == 5
-    assert rate_debt_to_cash(0.75) == 4
-    assert rate_debt_to_cash(1.0) == 4
-    assert rate_debt_to_cash(1.5) == 3
-    assert rate_debt_to_cash(2.0) == 3
-    assert rate_debt_to_cash(3.0) == 2
-    assert rate_debt_to_cash(4.0) == 2
-    assert rate_debt_to_cash(4.1) == 1
+    assert rate_debt_to_cash(0.5)["stars"] == 5
+    assert rate_debt_to_cash(0.75)["stars"] == 4
+    assert rate_debt_to_cash(1.0)["stars"] == 4
+    assert rate_debt_to_cash(1.5)["stars"] == 3
+    assert rate_debt_to_cash(2.0)["stars"] == 3
+    assert rate_debt_to_cash(3.0)["stars"] == 2
+    assert rate_debt_to_cash(4.0)["stars"] == 2
+    assert rate_debt_to_cash(4.1)["stars"] == 1
 
 
 def test_profit_to_cash_consistency_thresholds():
-    assert rate_profit_to_cash_consistency(0.599) == 1
-    assert rate_profit_to_cash_consistency(0.60) == 2
-    assert rate_profit_to_cash_consistency(0.799) == 2
-    assert rate_profit_to_cash_consistency(0.80) == 3
-    assert rate_profit_to_cash_consistency(0.999) == 3
-    assert rate_profit_to_cash_consistency(1.00) == 4
-    assert rate_profit_to_cash_consistency(1.199) == 4
-    assert rate_profit_to_cash_consistency(1.20) == 5
+    assert rate_profit_to_cash_consistency(0.599)["stars"] == 1
+    assert rate_profit_to_cash_consistency(0.60)["stars"] == 2
+    assert rate_profit_to_cash_consistency(0.799)["stars"] == 2
+    assert rate_profit_to_cash_consistency(0.80)["stars"] == 3
+    assert rate_profit_to_cash_consistency(0.999)["stars"] == 3
+    assert rate_profit_to_cash_consistency(1.00)["stars"] == 4
+    assert rate_profit_to_cash_consistency(1.199)["stars"] == 4
+    assert rate_profit_to_cash_consistency(1.20)["stars"] == 5
+
+
+# ============================================================
+# RAW CALCULATION TESTS
+# ============================================================
+
+def test_fcf_conversion_calculation():
+    result = calculate_fcf_conversion(
+        100.0,
+        90.0,
+    )
+
+    assert result["status"] == "OK"
+    assert result["value"] == 0.90
+
+
+def test_fcf_conversion_zero_net_income():
+    result = calculate_fcf_conversion(
+        0.0,
+        10.0,
+    )
+
+    assert result["status"] == "INVALID"
+    assert result["value"] is None
+
+
+def test_fcf_conversion_negative_net_income():
+    result = calculate_fcf_conversion(
+        -10.0,
+        5.0,
+    )
+
+    assert result["status"] == "INVALID"
+    assert result["value"] is None
+
+
+def test_net_debt_to_fcf_calculation():
+    result = calculate_net_debt_to_fcf(
+        20.0,
+        10.0,
+    )
+
+    assert result["status"] == "OK"
+    assert result["value"] == 2.0
+
+
+def test_net_debt_to_fcf_negative_net_debt():
+    result = calculate_net_debt_to_fcf(
+        -20.0,
+        20.0,
+    )
+
+    assert result["status"] == "OK"
+    assert result["value"] == -1.0
+
+
+def test_net_debt_to_fcf_negative_fcf():
+    result = calculate_net_debt_to_fcf(
+        20.0,
+        -10.0,
+    )
+
+    assert result["status"] == "INVALID"
+    assert result["value"] is None
+
+
+def test_profit_to_cash_consistency_calculation():
+    result = calculate_profit_to_cash_consistency(
+        0.10,
+        0.12,
+    )
+
+    assert result["status"] == "OK"
+    assert result["value"] == 1.2
+
+
+def test_profit_to_cash_consistency_negative_net_margin():
+    result = calculate_profit_to_cash_consistency(
+        -0.10,
+        0.12,
+    )
+
+    assert result["status"] == "INVALID"
+    assert result["value"] is None
 
 
 # ============================================================
@@ -200,13 +286,17 @@ def test_calculate_quality_returns_expected_structure():
         debt_to_cash=0.5,
     )
 
-    result = calculate_quality(normalized, derived)
+    result = calculate_quality(
+        normalized,
+        derived,
+    )
 
-    assert result["status"] in {"OK", "MISSING"}
+    assert result["schema_version"] == "quality_v0.1"
     assert result["ticker"] == "TEST"
-    assert "metrics" in result
-    assert "overall_score" in result
-    assert "overall_stars" in result
+    assert result["company_type"] == "NON_FINANCIAL"
+
+    assert "quality" in result
+    assert "components" in result
     assert "limitations" in result
 
 
@@ -216,7 +306,9 @@ def test_calculate_quality_contains_all_quality_metrics():
         _build_derived(),
     )
 
-    assert set(result["metrics"].keys()) == set(QUALITY_METRICS)
+    assert set(result["components"].keys()) == set(
+        QUALITY_METRICS
+    )
 
 
 def test_calculate_quality_score_is_bounded():
@@ -225,8 +317,82 @@ def test_calculate_quality_score_is_bounded():
         _build_derived(),
     )
 
-    assert 0.0 <= result["overall_score"] <= 5.0
-    assert 1 <= result["overall_stars"] <= 5
+    quality = result["quality"]
+
+    assert quality["status"] == "OK"
+    assert 0.0 <= quality["score"] <= 5.0
+    assert quality["stars"] in {
+        1,
+        2,
+        3,
+        4,
+        5,
+    }
+
+
+# ============================================================
+# COMPONENT CALCULATION TESTS
+# ============================================================
+
+def test_quality_component_values_are_present():
+    result = calculate_quality(
+        _build_normalized(),
+        _build_derived(),
+    )
+
+    components = result["components"]
+
+    for metric_name in QUALITY_METRICS:
+        assert metric_name in components
+        assert "status" in components[metric_name]
+        assert "value" in components[metric_name]
+
+
+def test_fcf_conversion_component_is_calculated():
+    result = calculate_quality(
+        _build_normalized(net_income=15.0),
+        _build_derived(fcf=18.0),
+    )
+
+    component = result["components"]["fcf_conversion"]
+
+    assert component["status"] == "OK"
+    assert component["value"] == 1.2
+    assert component["stars"] == 5
+
+
+def test_net_debt_to_fcf_component_is_calculated():
+    result = calculate_quality(
+        _build_normalized(),
+        _build_derived(
+            fcf=20.0,
+            net_debt=10.0,
+        ),
+    )
+
+    component = result["components"]["net_debt_to_fcf"]
+
+    assert component["status"] == "OK"
+    assert component["value"] == 0.5
+    assert component["stars"] == 5
+
+
+def test_profit_to_cash_component_is_calculated():
+    result = calculate_quality(
+        _build_normalized(),
+        _build_derived(
+            net_margin=0.10,
+            fcf_margin=0.12,
+        ),
+    )
+
+    component = result["components"][
+        "profit_to_cash_consistency"
+    ]
+
+    assert component["status"] == "OK"
+    assert component["value"] == 1.2
+    assert component["stars"] == 5
 
 
 # ============================================================
@@ -236,25 +402,34 @@ def test_calculate_quality_score_is_bounded():
 def test_missing_components_are_excluded_from_score():
     derived = _build_derived()
 
-    derived["derived_metrics"]["operating_margin"] = {
-        "status": "MISSING",
-        "value": None,
-    }
+    derived["derived_metrics"][
+        "operating_margin"
+    ] = _missing_metric()
 
-    derived["derived_metrics"]["net_margin"] = {
-        "status": "MISSING",
-        "value": None,
-    }
+    derived["derived_metrics"][
+        "net_margin"
+    ] = _missing_metric()
 
     result = calculate_quality(
         _build_normalized(),
         derived,
     )
 
-    assert result["metrics"]["operating_margin"]["status"] == "MISSING"
-    assert result["metrics"]["net_margin"]["status"] == "MISSING"
+    assert (
+        result["components"]["operating_margin"]["status"]
+        == "MISSING"
+    )
 
-    assert result["status"] in {"OK", "MISSING"}
+    assert (
+        result["components"]["net_margin"]["status"]
+        == "MISSING"
+    )
+
+    assert result["quality"]["status"] == "OK"
+    assert (
+        result["quality"]["available_components"]
+        >= 4
+    )
 
 
 def test_quality_requires_minimum_four_valid_components():
@@ -266,25 +441,28 @@ def test_quality_requires_minimum_four_valid_components():
         "fcf_margin",
         "debt_to_cash",
     ]:
-        derived["derived_metrics"][metric_name] = {
-            "status": "MISSING",
-            "value": None,
-        }
+        derived["derived_metrics"][metric_name] = (
+            _missing_metric()
+        )
 
     result = calculate_quality(
         _build_normalized(),
         derived,
     )
 
-    assert result["status"] == "MISSING"
+    assert result["quality"]["status"] == "MISSING"
+    assert result["quality"]["score"] is None
+    assert result["quality"]["stars"] is None
 
 
 # ============================================================
 # EDGE CASES
 # ============================================================
 
-def test_negative_net_income_does_not_create_invalid_quality_result():
-    normalized = _build_normalized(net_income=-10.0)
+def test_negative_net_income_does_not_crash_quality():
+    normalized = _build_normalized(
+        net_income=-10.0
+    )
 
     derived = _build_derived(
         operating_margin=-0.05,
@@ -295,10 +473,15 @@ def test_negative_net_income_does_not_create_invalid_quality_result():
         debt_to_cash=2.0,
     )
 
-    result = calculate_quality(normalized, derived)
+    result = calculate_quality(
+        normalized,
+        derived,
+    )
 
-    assert result["status"] in {"OK", "MISSING"}
-    assert result["overall_stars"] >= 1
+    assert result["quality"]["status"] in {
+        "OK",
+        "MISSING",
+    }
 
 
 def test_negative_net_debt_is_not_treated_as_bad():
@@ -312,7 +495,9 @@ def test_negative_net_debt_is_not_treated_as_bad():
         derived,
     )
 
-    metric = result["metrics"]["net_debt_to_fcf"]
+    metric = result["components"][
+        "net_debt_to_fcf"
+    ]
 
     assert metric["status"] == "OK"
     assert metric["value"] == -1.0
@@ -328,12 +513,19 @@ def test_financial_company_contains_limitation():
         company_type="FINANCIAL",
     )
 
-    derived = _build_derived()
-
-    result = calculate_quality(normalized, derived)
+    result = calculate_quality(
+        normalized,
+        _build_derived(),
+    )
 
     assert "limitations" in result
-    assert len(result["limitations"]) >= 1
+    assert "financial_company" in result["limitations"]
+
+    limitation = result["limitations"][
+        "financial_company"
+    ]
+
+    assert limitation["status"] == "WARNING"
 
 
 # ============================================================
@@ -346,7 +538,9 @@ def test_validate_quality_accepts_valid_result():
         _build_derived(),
     )
 
-    assert validate_quality(result) is True
+    failures = validate_quality(result)
+
+    assert failures == []
 
 
 def test_validate_quality_rejects_invalid_result():
@@ -355,9 +549,11 @@ def test_validate_quality_rejects_invalid_result():
         _build_derived(),
     )
 
-    result["overall_score"] = "invalid"
+    result["quality"]["score"] = "invalid"
 
-    assert validate_quality(result) is False
+    failures = validate_quality(result)
+
+    assert "quality.score" in failures
 
 
 def test_validate_quality_rejects_invalid_status():
@@ -366,16 +562,18 @@ def test_validate_quality_rejects_invalid_status():
         _build_derived(),
     )
 
-    result["status"] = "UNKNOWN"
+    result["quality"]["status"] = "UNKNOWN"
 
-    assert validate_quality(result) is False
+    failures = validate_quality(result)
+
+    assert "quality.status" in failures
 
 
 # ============================================================
 # TYPE VALIDATION
 # ============================================================
 
-def test_rate_functions_reject_non_numeric_values():
+def test_rate_functions_handle_non_numeric_values():
     rate_functions = [
         rate_operating_margin,
         rate_net_margin,
@@ -387,11 +585,8 @@ def test_rate_functions_reject_non_numeric_values():
     ]
 
     for rate_function in rate_functions:
-        try:
-            rate_function(None)
-        except (TypeError, ValueError):
-            pass
-        else:
-            raise AssertionError(
-                f"{rate_function.__name__} should reject non-numeric input"
-            )
+        result = rate_function(None)
+
+        assert isinstance(result, dict)
+        assert result["status"] == "MISSING"
+        assert result["value"] is None
