@@ -40,6 +40,20 @@ def _is_number(value: Any) -> bool:
     )
 
 
+def _round_growth(value: float) -> float:
+    """
+    Normalize floating-point noise.
+
+    Example:
+        120 / 100 - 1
+        -> 0.19999999999999996
+
+    becomes:
+        0.2
+    """
+    return round(float(value), 10)
+
+
 def _build_ok_metric(
     metric: str,
     value: float,
@@ -81,23 +95,6 @@ def _build_invalid_metric(
     }
 
 
-def _round_growth(value: float) -> float:
-    """
-    Normalize floating-point noise in growth calculations.
-
-    Example:
-        120 / 100 - 1
-        -> 0.19999999999999996
-
-    becomes:
-        0.2
-
-    This is important because rating thresholds include exact
-    boundaries such as 20%.
-    """
-    return round(float(value), 10)
-
-
 def _date_string(value: Any) -> str | None:
     if isinstance(value, datetime):
         return value.date().isoformat()
@@ -135,7 +132,9 @@ def _quarter_value(record: dict[str, Any]) -> str | None:
     return str(value)
 
 
-def _record_period_end(record: dict[str, Any]) -> str | None:
+def _record_period_end(
+    record: dict[str, Any],
+) -> str | None:
     for key in ("period_end", "end", "date"):
         value = _date_string(record.get(key))
 
@@ -143,6 +142,75 @@ def _record_period_end(record: dict[str, Any]) -> str | None:
             return value
 
     return None
+
+
+# ============================================================
+# HISTORY STRUCTURE HELPERS
+# ============================================================
+
+def _extract_history_records(
+    history: Any,
+    period: str = "quarterly",
+) -> list[dict[str, Any]]:
+    """
+    Accept both:
+
+        [
+            {...},
+            {...},
+        ]
+
+    and Historical Extraction's:
+
+        {
+            "status": "OK",
+            "quarterly": [...],
+            "annual": [...],
+        }
+    """
+
+    if isinstance(history, dict):
+        records = history.get(period, [])
+
+    elif isinstance(history, list):
+        records = history
+
+    else:
+        return []
+
+    if not isinstance(records, list):
+        return []
+
+    return records
+
+
+def _valid_history_records(
+    history: Any,
+    period: str = "quarterly",
+) -> list[dict[str, Any]]:
+    records = _extract_history_records(
+        history,
+        period=period,
+    )
+
+    result = []
+
+    for record in records:
+        if not isinstance(record, dict):
+            continue
+
+        if record.get("status") not in (None, "OK"):
+            continue
+
+        if not _is_number(record.get("value")):
+            continue
+
+        if _record_period_end(record) is None:
+            continue
+
+        result.append(record)
+
+    return result
 
 
 # ============================================================
@@ -155,15 +223,12 @@ def calculate_positive_yoy(
     previous: Any,
 ) -> dict[str, Any]:
     """
-    Calculate YoY growth for metrics where conventional growth
-    requires both periods to be positive.
+    Conventional YoY calculation for metrics where both
+    current and prior values must be positive.
 
     Used for:
         - EPS
         - FCF
-
-    If either period is <= 0, the result is INVALID rather than
-    fabricating a misleading growth rate.
     """
 
     if not _is_number(current) or not _is_number(previous):
@@ -186,7 +251,9 @@ def calculate_positive_yoy(
             "for conventional YoY calculation.",
         )
 
-    growth = _round_growth((current / previous) - 1.0)
+    growth = _round_growth(
+        (current / previous) - 1.0
+    )
 
     return _build_ok_metric(
         metric_name,
@@ -200,16 +267,13 @@ def calculate_standard_yoy(
     previous: Any,
 ) -> dict[str, Any]:
     """
-    Calculate standard YoY growth.
+    Standard YoY calculation.
 
     Used for:
         - Revenue
         - Operating Income
 
     Negative growth is allowed.
-
-    Previous value of zero is invalid because division by zero
-    would make the conventional YoY calculation undefined.
     """
 
     if not _is_number(current) or not _is_number(previous):
@@ -224,7 +288,9 @@ def calculate_standard_yoy(
             "Previous value cannot be zero.",
         )
 
-    growth = _round_growth((current / previous) - 1.0)
+    growth = _round_growth(
+        (current / previous) - 1.0
+    )
 
     return _build_ok_metric(
         metric_name,
@@ -240,11 +306,6 @@ def calculate_cagr_3y(
 ) -> dict[str, Any]:
     """
     Calculate CAGR.
-
-    Requirements:
-        - start value > 0
-        - end value >= 0
-        - years > 0
     """
 
     if not _is_number(start_value) or not _is_number(end_value):
@@ -271,7 +332,9 @@ def calculate_cagr_3y(
             "Years must be greater than zero.",
         )
 
-    cagr = (end_value / start_value) ** (1.0 / years) - 1.0
+    cagr = (
+        end_value / start_value
+    ) ** (1.0 / years) - 1.0
 
     return _build_ok_metric(
         metric_name,
@@ -280,48 +343,28 @@ def calculate_cagr_3y(
 
 
 # ============================================================
-# HISTORY HELPERS
+# QUARTER PAIR SELECTION
 # ============================================================
-
-def _valid_history_records(
-    history: Any,
-) -> list[dict[str, Any]]:
-    if not isinstance(history, list):
-        return []
-
-    records = []
-
-    for record in history:
-        if not isinstance(record, dict):
-            continue
-
-        if record.get("status") not in (None, "OK"):
-            continue
-
-        if not _is_number(record.get("value")):
-            continue
-
-        if _record_period_end(record) is None:
-            continue
-
-        records.append(record)
-
-    return records
-
 
 def _select_latest_quarter_pair(
     history: Any,
-) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+) -> tuple[
+    dict[str, Any] | None,
+    dict[str, Any] | None,
+]:
     """
-    Select the latest quarterly observation and its prior-year
+    Select latest quarterly observation and prior-year
     comparable quarter.
 
     Priority:
-        1. Same quarter label + prior FY
-        2. Same quarter label + one-year-earlier period_end
+        1. Same quarter + prior fiscal year
+        2. Same calendar year-offset period
     """
 
-    records = _valid_history_records(history)
+    records = _valid_history_records(
+        history,
+        period="quarterly",
+    )
 
     if not records:
         return None, None
@@ -336,7 +379,7 @@ def _select_latest_quarter_pair(
     latest_quarter = _quarter_value(latest)
     latest_fy = _year_value(latest)
 
-    candidates: list[dict[str, Any]] = []
+    candidates = []
 
     for record in records[:-1]:
         record_quarter = _quarter_value(record)
@@ -360,77 +403,83 @@ def _select_latest_quarter_pair(
 
     latest_end = _record_period_end(latest)
 
-    if latest_end:
+    if not latest_end:
+        return latest, None
+
+    try:
+        latest_date = date.fromisoformat(
+            latest_end
+        )
+    except ValueError:
+        return latest, None
+
+    target_year = latest_date.year - 1
+
+    year_candidates = []
+
+    for record in records[:-1]:
+        period_end = _record_period_end(record)
+
+        if not period_end:
+            continue
+
         try:
-            latest_date = date.fromisoformat(latest_end)
+            record_date = date.fromisoformat(
+                period_end
+            )
         except ValueError:
-            latest_date = None
+            continue
 
-        if latest_date:
-            target_year = latest_date.year - 1
+        if record_date.year == target_year:
+            year_candidates.append(record)
 
-            year_candidates = []
+    if not year_candidates:
+        return latest, None
 
-            for record in records[:-1]:
-                period_end = _record_period_end(record)
-
-                if not period_end:
-                    continue
-
-                try:
-                    record_date = date.fromisoformat(period_end)
-                except ValueError:
-                    continue
-
-                if record_date.year == target_year:
-                    year_candidates.append(record)
-
-            if year_candidates:
-                previous = min(
-                    year_candidates,
-                    key=lambda x: abs(
-                        (
-                            date.fromisoformat(
-                                _record_period_end(x)
-                            )
-                            - latest_date
-                        ).days
-                    ),
+    previous = min(
+        year_candidates,
+        key=lambda x: abs(
+            (
+                date.fromisoformat(
+                    _record_period_end(x)
                 )
+                - latest_date
+            ).days
+        ),
+    )
 
-                return latest, previous
+    return latest, previous
 
-    return latest, None
 
+# ============================================================
+# THREE-YEAR CAGR SELECTION
+# ============================================================
 
 def _select_three_year_revenue_pair(
     history: Any,
-) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+) -> tuple[
+    dict[str, Any] | None,
+    dict[str, Any] | None,
+]:
     """
-    Select annual revenue observations exactly three fiscal years
-    apart.
-
-    No 4-year or 5-year fallback is used because the framework
-    explicitly requires a 3-year CAGR.
+    Select annual revenue observations exactly three fiscal
+    years apart.
     """
 
-    records = _valid_history_records(history)
+    records = _valid_history_records(
+        history,
+        period="annual",
+    )
 
-    annual_records = [
-        record
-        for record in records
-        if str(record.get("period_type", "")).lower() == "annual"
-    ]
-
-    if not annual_records:
+    if not records:
         return None, None
 
-    annual_records = sorted(
-        annual_records,
+    records = sorted(
+        records,
         key=lambda x: _year_value(x) or 0,
     )
 
-    latest = annual_records[-1]
+    latest = records[-1]
     latest_fy = _year_value(latest)
 
     if latest_fy is None:
@@ -440,7 +489,7 @@ def _select_three_year_revenue_pair(
 
     candidates = [
         record
-        for record in annual_records
+        for record in records
         if _year_value(record) == target_fy
     ]
 
@@ -455,27 +504,34 @@ def _select_three_year_revenue_pair(
     return latest, previous
 
 
+# ============================================================
+# FCF HISTORY
+# ============================================================
+
 def _build_fcf_history(
     cfo_history: Any,
     capex_history: Any,
 ) -> list[dict[str, Any]]:
     """
-    Build historical FCF records by matching CFO and CapEx
-    observations on period metadata.
-
     FCF = CFO + CapEx
 
-    CapEx is expected to be represented as a negative cash-flow
-    amount in the historical data.
+    Historical CapEx is expected to be negative.
     """
 
-    cfo_records = _valid_history_records(cfo_history)
-    capex_records = _valid_history_records(capex_history)
+    cfo_records = _valid_history_records(
+        cfo_history,
+        period="quarterly",
+    )
+
+    capex_records = _valid_history_records(
+        capex_history,
+        period="quarterly",
+    )
 
     if not cfo_records or not capex_records:
         return []
 
-    capex_map: dict[tuple[Any, Any, Any, Any], dict[str, Any]] = {}
+    capex_map = {}
 
     for record in capex_records:
         key = (
@@ -502,7 +558,10 @@ def _build_fcf_history(
         if capex is None:
             continue
 
-        fcf = cfo["value"] + capex["value"]
+        fcf = (
+            cfo["value"]
+            + capex["value"]
+        )
 
         result.append(
             {
@@ -510,7 +569,9 @@ def _build_fcf_history(
                 "period_end": _record_period_end(cfo),
                 "quarter": _quarter_value(cfo),
                 "fy": _year_value(cfo),
-                "period_type": cfo.get("period_type"),
+                "period_type": cfo.get(
+                    "period_type"
+                ),
                 "value": fcf,
             }
         )
@@ -527,7 +588,9 @@ def _calculate_history_yoy(
     history: Any,
     positive_only: bool,
 ) -> dict[str, Any]:
-    latest, previous = _select_latest_quarter_pair(history)
+    latest, previous = _select_latest_quarter_pair(
+        history
+    )
 
     if latest is None:
         return _build_missing_metric(
@@ -560,8 +623,13 @@ def _calculate_history_yoy(
             "quarterly",
         ]
 
-        result["current_period_end"] = _record_period_end(latest)
-        result["previous_period_end"] = _record_period_end(previous)
+        result["current_period_end"] = (
+            _record_period_end(latest)
+        )
+
+        result["previous_period_end"] = (
+            _record_period_end(previous)
+        )
 
     return result
 
@@ -569,8 +637,10 @@ def _calculate_history_yoy(
 def _calculate_revenue_cagr(
     revenue_history: Any,
 ) -> dict[str, Any]:
-    latest, previous = _select_three_year_revenue_pair(
-        revenue_history
+    latest, previous = (
+        _select_three_year_revenue_pair(
+            revenue_history
+        )
     )
 
     if latest is None:
@@ -599,92 +669,81 @@ def _calculate_revenue_cagr(
             "annual",
         ]
 
-        result["start_period_end"] = _record_period_end(previous)
-        result["end_period_end"] = _record_period_end(latest)
+        result["start_period_end"] = (
+            _record_period_end(previous)
+        )
+
+        result["end_period_end"] = (
+            _record_period_end(latest)
+        )
 
     return result
 
 
 # ============================================================
-# GROWTH RATING
+# STAR RATING
 # ============================================================
 
 def _rate_growth_value(
     metric_name: str,
     value: Any,
 ) -> dict[str, Any]:
-    """
-    Convert growth rate into a 1-5 star rating.
-
-    Thresholds:
-
-        Revenue YoY
-            < 0%   -> 1★
-            >= 0%  -> 2★
-            >= 5%  -> 3★
-            >= 10% -> 4★
-            >= 20% -> 5★
-
-        Operating Income YoY
-            < 0%   -> 1★
-            >= 0%  -> 2★
-            >= 5%  -> 3★
-            >= 15% -> 4★
-            >= 30% -> 5★
-
-        EPS YoY
-            < 0%   -> 1★
-            >= 0%  -> 2★
-            >= 5%  -> 3★
-            >= 15% -> 4★
-            >= 30% -> 5★
-
-        FCF YoY
-            < 0%   -> 1★
-            >= 0%  -> 2★
-            >= 5%  -> 3★
-            >= 15% -> 4★
-            >= 30% -> 5★
-
-        Revenue 3Y CAGR
-            < 0%   -> 1★
-            >= 0%  -> 2★
-            >= 5%  -> 3★
-            >= 10% -> 4★
-            >= 20% -> 5★
-    """
-
     if not _is_number(value):
         return {
             "status": "INVALID",
             "metric": metric_name,
-            "stars": None,
             "value": None,
+            "stars": None,
         }
 
     value = _round_growth(value)
 
     if metric_name == "revenue_yoy":
-        thresholds = (0.00, 0.05, 0.10, 0.20)
+        thresholds = (
+            0.00,
+            0.05,
+            0.10,
+            0.20,
+        )
 
     elif metric_name == "operating_income_yoy":
-        thresholds = (0.00, 0.05, 0.15, 0.30)
+        thresholds = (
+            0.00,
+            0.05,
+            0.15,
+            0.30,
+        )
 
     elif metric_name == "eps_yoy":
-        thresholds = (0.00, 0.05, 0.15, 0.30)
+        thresholds = (
+            0.00,
+            0.05,
+            0.15,
+            0.30,
+        )
 
     elif metric_name == "fcf_yoy":
-        thresholds = (0.00, 0.05, 0.15, 0.30)
+        thresholds = (
+            0.00,
+            0.05,
+            0.15,
+            0.30,
+        )
 
     elif metric_name == "revenue_cagr_3y":
-        thresholds = (0.00, 0.05, 0.10, 0.20)
+        thresholds = (
+            0.00,
+            0.05,
+            0.10,
+            0.20,
+        )
 
     else:
         return {
             "status": "INVALID",
             "metric": metric_name,
-            "stars": None,
             "value": value,
+            "stars": None,
             "reason": "Unknown growth metric.",
         }
 
@@ -707,6 +766,55 @@ def _rate_growth_value(
     }
 
 
+# ------------------------------------------------------------
+# Public rating functions
+# ------------------------------------------------------------
+
+def rate_revenue_yoy(
+    value: Any,
+) -> dict[str, Any]:
+    return _rate_growth_value(
+        "revenue_yoy",
+        value,
+    )
+
+
+def rate_operating_income_yoy(
+    value: Any,
+) -> dict[str, Any]:
+    return _rate_growth_value(
+        "operating_income_yoy",
+        value,
+    )
+
+
+def rate_eps_yoy(
+    value: Any,
+) -> dict[str, Any]:
+    return _rate_growth_value(
+        "eps_yoy",
+        value,
+    )
+
+
+def rate_fcf_yoy(
+    value: Any,
+) -> dict[str, Any]:
+    return _rate_growth_value(
+        "fcf_yoy",
+        value,
+    )
+
+
+def rate_revenue_cagr_3y(
+    value: Any,
+) -> dict[str, Any]:
+    return _rate_growth_value(
+        "revenue_cagr_3y",
+        value,
+    )
+
+
 # ============================================================
 # WARNINGS
 # ============================================================
@@ -714,18 +822,41 @@ def _rate_growth_value(
 def detect_growth_warnings(
     components: dict[str, dict[str, Any]],
 ) -> list[str]:
+    """
+    Return machine-readable warning codes.
+
+    Codes:
+        revenue_operating_income_divergence
+        revenue_fcf_divergence
+        eps_revenue_divergence
+    """
+
     warnings: list[str] = []
 
-    revenue = components.get("revenue_yoy", {})
+    revenue = components.get(
+        "revenue_yoy",
+        {},
+    )
+
     operating_income = components.get(
         "operating_income_yoy",
         {},
     )
-    eps = components.get("eps_yoy", {})
-    fcf = components.get("fcf_yoy", {})
+
+    eps = components.get(
+        "eps_yoy",
+        {},
+    )
+
+    fcf = components.get(
+        "fcf_yoy",
+        {},
+    )
 
     revenue_value = revenue.get("value")
-    operating_income_value = operating_income.get("value")
+    operating_income_value = (
+        operating_income.get("value")
+    )
     eps_value = eps.get("value")
     fcf_value = fcf.get("value")
 
@@ -736,8 +867,7 @@ def detect_growth_warnings(
         and operating_income_value < 0
     ):
         warnings.append(
-            "Revenue growth is >=10% while operating income "
-            "growth is negative."
+            "revenue_operating_income_divergence"
         )
 
     if (
@@ -747,7 +877,7 @@ def detect_growth_warnings(
         and fcf_value < 0
     ):
         warnings.append(
-            "Revenue growth is >=10% while FCF growth is negative."
+            "revenue_fcf_divergence"
         )
 
     if (
@@ -757,7 +887,7 @@ def detect_growth_warnings(
         and revenue_value < 0.05
     ):
         warnings.append(
-            "EPS growth is >=30% while revenue growth is <5%."
+            "eps_revenue_divergence"
         )
 
     return warnings
@@ -775,48 +905,66 @@ def _calculate_weighted_score(
     valid_components = 0
 
     for metric_name, weight in GROWTH_WEIGHTS.items():
-        component = components.get(metric_name, {})
+        component = components.get(
+            metric_name,
+            {},
+        )
 
         if (
             component.get("status") != "OK"
-            or not _is_number(component.get("stars"))
+            or not _is_number(
+                component.get("stars")
+            )
         ):
             continue
 
-        stars = component["stars"]
+        weighted_sum += (
+            component["stars"] * weight
+        )
 
-        weighted_sum += stars * weight
         weight_sum += weight
         valid_components += 1
 
     if valid_components < MIN_VALID_COMPONENTS:
         return {
-            "status": "INSUFFICIENT_DATA",
+            "status": "MISSING",
             "score": None,
             "stars": None,
+            "available_components": valid_components,
             "valid_components": valid_components,
-            "total_components": len(GROWTH_METRICS),
-            "coverage": (
-                valid_components / len(GROWTH_METRICS)
-                if GROWTH_METRICS
-                else 0.0
+            "total_components": len(
+                GROWTH_METRICS
+            ),
+            "coverage": round(
+                valid_components
+                / len(GROWTH_METRICS),
+                4,
             ),
         }
 
     score = weighted_sum / weight_sum
 
-    # Convert weighted 1-5 score to integer star rating.
-    stars = int(score + 0.5)
-    stars = max(1, min(5, stars))
+    stars = int(
+        score + 0.5
+    )
+
+    stars = max(
+        1,
+        min(5, stars),
+    )
 
     return {
         "status": "OK",
         "score": round(score, 4),
         "stars": stars,
+        "available_components": valid_components,
         "valid_components": valid_components,
-        "total_components": len(GROWTH_METRICS),
+        "total_components": len(
+            GROWTH_METRICS
+        ),
         "coverage": round(
-            valid_components / len(GROWTH_METRICS),
+            valid_components
+            / len(GROWTH_METRICS),
             4,
         ),
     }
@@ -832,81 +980,100 @@ def calculate_growth(
     historical: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """
-    Calculate Growth Factor v0.1.
-
-    Historical Extraction is the source of truth for quarterly
-    YoY calculations.
+    Growth Factor v0.1
 
     Components:
-        - Revenue YoY              25%
-        - Operating Income YoY     20%
-        - EPS YoY                  25%
-        - FCF YoY                  20%
-        - Revenue 3Y CAGR          10%
+        Revenue YoY              25%
+        Operating Income YoY     20%
+        EPS YoY                  25%
+        FCF YoY                  20%
+        Revenue 3Y CAGR          10%
 
     Minimum valid components:
         3 / 5
     """
 
     if not isinstance(normalized, dict):
-        raise TypeError("normalized must be a dictionary.")
+        raise TypeError(
+            "normalized must be a dictionary."
+        )
 
     if not isinstance(derived, dict):
-        raise TypeError("derived must be a dictionary.")
+        raise TypeError(
+            "derived must be a dictionary."
+        )
+
+    if historical is None:
+        historical = {}
+
+    if not isinstance(historical, dict):
+        raise TypeError(
+            "historical must be a dictionary."
+        )
 
     ticker = normalized.get("ticker")
 
-    components: dict[str, dict[str, Any]] = {}
+    revenue_history = historical.get(
+        "revenue",
+        {},
+    )
 
-    if not isinstance(historical, dict):
-        historical = {}
-
-    revenue_history = historical.get("revenue", [])
     operating_income_history = historical.get(
         "operating_income",
-        [],
+        {},
     )
+
     eps_history = historical.get(
         "diluted_eps",
-        [],
+        {},
     )
+
     cfo_history = historical.get(
         "cfo",
-        [],
+        {},
     )
+
     capex_history = historical.get(
         "capex",
-        [],
+        {},
     )
+
+    components: dict[str, dict[str, Any]] = {}
 
     # --------------------------------------------------------
     # Revenue YoY
     # --------------------------------------------------------
 
-    components["revenue_yoy"] = _calculate_history_yoy(
-        "revenue_yoy",
-        revenue_history,
-        positive_only=False,
+    components["revenue_yoy"] = (
+        _calculate_history_yoy(
+            "revenue_yoy",
+            revenue_history,
+            positive_only=False,
+        )
     )
 
     # --------------------------------------------------------
     # Operating Income YoY
     # --------------------------------------------------------
 
-    components["operating_income_yoy"] = _calculate_history_yoy(
-        "operating_income_yoy",
-        operating_income_history,
-        positive_only=False,
+    components["operating_income_yoy"] = (
+        _calculate_history_yoy(
+            "operating_income_yoy",
+            operating_income_history,
+            positive_only=False,
+        )
     )
 
     # --------------------------------------------------------
     # EPS YoY
     # --------------------------------------------------------
 
-    components["eps_yoy"] = _calculate_history_yoy(
-        "eps_yoy",
-        eps_history,
-        positive_only=True,
+    components["eps_yoy"] = (
+        _calculate_history_yoy(
+            "eps_yoy",
+            eps_history,
+            positive_only=True,
+        )
     )
 
     # --------------------------------------------------------
@@ -918,18 +1085,22 @@ def calculate_growth(
         capex_history,
     )
 
-    components["fcf_yoy"] = _calculate_history_yoy(
-        "fcf_yoy",
-        fcf_history,
-        positive_only=True,
+    components["fcf_yoy"] = (
+        _calculate_history_yoy(
+            "fcf_yoy",
+            fcf_history,
+            positive_only=True,
+        )
     )
 
     # --------------------------------------------------------
     # Revenue 3Y CAGR
     # --------------------------------------------------------
 
-    components["revenue_cagr_3y"] = _calculate_revenue_cagr(
-        revenue_history,
+    components["revenue_cagr_3y"] = (
+        _calculate_revenue_cagr(
+            revenue_history
+        )
     )
 
     # --------------------------------------------------------
@@ -937,7 +1108,9 @@ def calculate_growth(
     # --------------------------------------------------------
 
     for metric_name in GROWTH_METRICS:
-        component = components[metric_name]
+        component = components[
+            metric_name
+        ]
 
         if component.get("status") != "OK":
             component["stars"] = None
@@ -948,20 +1121,24 @@ def calculate_growth(
             component.get("value"),
         )
 
-        component["stars"] = rated.get("stars")
+        component["stars"] = rated.get(
+            "stars"
+        )
 
     # --------------------------------------------------------
     # Warnings
     # --------------------------------------------------------
 
-    warnings = detect_growth_warnings(components)
+    warnings = detect_growth_warnings(
+        components
+    )
 
     # --------------------------------------------------------
     # Score
     # --------------------------------------------------------
 
     score_result = _calculate_weighted_score(
-        components,
+        components
     )
 
     # --------------------------------------------------------
@@ -970,22 +1147,33 @@ def calculate_growth(
 
     limitations: dict[str, Any] = {}
 
-    if components["eps_yoy"].get("status") != "OK":
+    if (
+        components["eps_yoy"].get("status")
+        != "OK"
+    ):
         limitations["eps_yoy"] = (
-            "EPS growth requires positive current and "
-            "prior-year comparable-quarter values."
+            "EPS growth requires positive current "
+            "and prior-year comparable-quarter values."
         )
 
-    if components["fcf_yoy"].get("status") != "OK":
+    if (
+        components["fcf_yoy"].get("status")
+        != "OK"
+    ):
         limitations["fcf_yoy"] = (
-            "FCF growth requires positive current and "
-            "prior-year comparable-quarter values."
+            "FCF growth requires positive current "
+            "and prior-year comparable-quarter values."
         )
 
-    if components["revenue_cagr_3y"].get("status") != "OK":
+    if (
+        components["revenue_cagr_3y"].get(
+            "status"
+        )
+        != "OK"
+    ):
         limitations["revenue_cagr_3y"] = (
-            "Revenue CAGR requires exact three-fiscal-year "
-            "annual history."
+            "Revenue CAGR requires exact "
+            "three-fiscal-year annual history."
         )
 
     return {
@@ -1010,97 +1198,110 @@ def validate_growth(
 
     Returns:
         [] when valid
-        list[str] when invalid
+        list[str] containing field paths when invalid
     """
 
     errors: list[str] = []
 
     if not isinstance(data, dict):
-        return ["Growth output must be a dictionary."]
+        return ["growth"]
 
     if data.get("schema_version") != SCHEMA_VERSION:
         errors.append(
-            "Invalid or missing schema_version."
+            "schema_version"
         )
 
     if "ticker" not in data:
         errors.append(
-            "Missing ticker."
+            "ticker"
         )
 
     growth = data.get("growth")
 
     if not isinstance(growth, dict):
         errors.append(
-            "Missing or invalid growth result."
+            "growth"
         )
     else:
         status = growth.get("status")
 
         if status not in (
             "OK",
-            "INSUFFICIENT_DATA",
+            "MISSING",
         ):
             errors.append(
-                "Invalid growth status."
+                "growth.status"
             )
 
         if status == "OK":
-            if not _is_number(growth.get("score")):
+            if not _is_number(
+                growth.get("score")
+            ):
                 errors.append(
-                    "Growth score must be numeric."
+                    "growth.score"
                 )
 
+            stars = growth.get("stars")
+
             if not isinstance(
-                growth.get("stars"),
+                stars,
                 int,
             ):
                 errors.append(
-                    "Growth stars must be an integer."
+                    "growth.stars"
+                )
+            elif stars < 1 or stars > 5:
+                errors.append(
+                    "growth.stars"
                 )
 
+            available = growth.get(
+                "available_components"
+            )
+
             if not isinstance(
-                growth.get("valid_components"),
+                available,
                 int,
             ):
                 errors.append(
-                    "valid_components must be an integer."
+                    "growth.available_components"
                 )
 
-        if status == "INSUFFICIENT_DATA":
-            if growth.get("score") is not None:
-                errors.append(
-                    "Insufficient-data score must be None."
-                )
+    components = data.get(
+        "components"
+    )
 
-            if growth.get("stars") is not None:
-                errors.append(
-                    "Insufficient-data stars must be None."
-                )
-
-    components = data.get("components")
-
-    if not isinstance(components, dict):
+    if not isinstance(
+        components,
+        dict,
+    ):
         errors.append(
-            "Missing or invalid components."
+            "components"
         )
     else:
         for metric_name in GROWTH_METRICS:
             if metric_name not in components:
                 errors.append(
-                    f"Missing component: {metric_name}"
+                    f"components.{metric_name}"
                 )
                 continue
 
-            component = components[metric_name]
+            component = components[
+                metric_name
+            ]
 
-            if not isinstance(component, dict):
+            if not isinstance(
+                component,
+                dict,
+            ):
                 errors.append(
-                    f"Invalid component: {metric_name}"
+                    f"components.{metric_name}"
                 )
                 continue
 
-            status = component.get("status")
+            status = component.get(
+                "status"
+            )
 
             if status not in (
                 "OK",
@@ -1108,7 +1309,7 @@ def validate_growth(
                 "INVALID",
             ):
                 errors.append(
-                    f"Invalid status for {metric_name}."
+                    f"components.{metric_name}.status"
                 )
 
             if status == "OK":
@@ -1116,34 +1317,48 @@ def validate_growth(
                     component.get("value")
                 ):
                     errors.append(
-                        f"OK component {metric_name} "
-                        "must have numeric value."
+                        f"components.{metric_name}.value"
                     )
 
-                stars = component.get("stars")
+                stars = component.get(
+                    "stars"
+                )
 
-                if not isinstance(stars, int):
+                if not isinstance(
+                    stars,
+                    int,
+                ):
                     errors.append(
-                        f"OK component {metric_name} "
-                        "must have integer stars."
+                        f"components.{metric_name}.stars"
                     )
+
                 elif stars < 1 or stars > 5:
                     errors.append(
-                        f"Invalid stars for {metric_name}."
+                        f"components.{metric_name}.stars"
                     )
 
-    warnings = data.get("warnings")
+    warnings = data.get(
+        "warnings"
+    )
 
-    if not isinstance(warnings, list):
+    if not isinstance(
+        warnings,
+        list,
+    ):
         errors.append(
-            "Warnings must be a list."
+            "warnings"
         )
 
-    limitations = data.get("limitations")
+    limitations = data.get(
+        "limitations"
+    )
 
-    if not isinstance(limitations, dict):
+    if not isinstance(
+        limitations,
+        dict,
+    ):
         errors.append(
-            "Limitations must be a dictionary."
+            "limitations"
         )
 
     return errors
