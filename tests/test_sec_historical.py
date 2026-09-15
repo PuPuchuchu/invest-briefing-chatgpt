@@ -40,6 +40,7 @@ def make_observation(
 ):
     observation = {
         "val": value,
+        "unit": unit,
         "filed": filed,
         "form": form,
         "fy": fy,
@@ -838,6 +839,7 @@ def test_direct_quarter_is_preferred_over_derived(
     revenue_units.append(
         {
             "val": 16,
+            "unit": "USD",
             "start": "2025-04-01",
             "end": "2025-06-30",
             "filed": "2025-08-15",
@@ -883,6 +885,7 @@ def test_duplicate_period_uses_latest_filing(
         [
             {
                 "val": 110,
+                "unit": "USD",
                 "start": "2024-01-01",
                 "end": "2024-12-31",
                 "filed": "2025-02-01",
@@ -893,6 +896,7 @@ def test_duplicate_period_uses_latest_filing(
             },
             {
                 "val": 111,
+                "unit": "USD",
                 "start": "2024-01-01",
                 "end": "2024-12-31",
                 "filed": "2025-03-01",
@@ -970,6 +974,7 @@ def test_eps_is_not_reconstructed_from_ytd(
         [
             {
                 "val": 0.90,
+                "unit": "USD/shares",
                 "start": "2025-01-01",
                 "end": "2025-06-30",
                 "filed": "2025-08-01",
@@ -981,6 +986,7 @@ def test_eps_is_not_reconstructed_from_ytd(
             },
             {
                 "val": 1.80,
+                "unit": "USD/shares",
                 "start": "2025-01-01",
                 "end": "2025-09-30",
                 "filed": "2025-11-01",
@@ -992,6 +998,7 @@ def test_eps_is_not_reconstructed_from_ytd(
             },
             {
                 "val": 2.50,
+                "unit": "USD/shares",
                 "start": "2025-01-01",
                 "end": "2025-12-31",
                 "filed": "2026-02-01",
