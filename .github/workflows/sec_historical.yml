@@ -22,5 +22,7 @@ jobs:
           pip install pytest
 
       - name: Run SEC Historical tests
+        env:
+          PYTHONPATH: ${{ github.workspace }}
         run: |
           pytest -q tests/test_sec_historical.py
