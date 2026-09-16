@@ -12,25 +12,54 @@ from datetime import datetime, timezone
 
 USER_AGENT = "invest-briefing-chatgpt/0.1 chks7788@gmail.com"
 
+
+# ============================================================
+# CURRENT TECHNOLOGY UNIVERSE
+# ============================================================
+
 TICKERS = {
     "MSFT": {
         "cik": "0000789019",
+        "company_type": "NON_FINANCIAL",
+    },
+    "AAPL": {
+        "cik": "0000320193",
         "company_type": "NON_FINANCIAL",
     },
     "NVDA": {
         "cik": "0001045810",
         "company_type": "NON_FINANCIAL",
     },
-    "JPM": {
-        "cik": "0000019617",
-        "company_type": "FINANCIAL",
+    "AVGO": {
+        "cik": "0001730168",
+        "company_type": "NON_FINANCIAL",
     },
-    "LLY": {
-        "cik": "0000059478",
+    "INTC": {
+        "cik": "0000050863",
+        "company_type": "NON_FINANCIAL",
+    },
+    "MU": {
+        "cik": "0000723125",
+        "company_type": "NON_FINANCIAL",
+    },
+    "AMD": {
+        "cik": "0000002488",
         "company_type": "NON_FINANCIAL",
     },
     "PLTR": {
         "cik": "0001321655",
+        "company_type": "NON_FINANCIAL",
+    },
+    "ORCL": {
+        "cik": "0001341439",
+        "company_type": "NON_FINANCIAL",
+    },
+    "SMCI": {
+        "cik": "0001375365",
+        "company_type": "NON_FINANCIAL",
+    },
+    "CRWV": {
+        "cik": "0001769628",
         "company_type": "NON_FINANCIAL",
     },
 }
@@ -82,7 +111,6 @@ def fetch_json(url: str) -> dict:
         )
 
         if status != 200:
-
             raise RuntimeError(
                 f"HTTP status: {status}"
             )
@@ -130,7 +158,6 @@ def validate_companyfacts(data: dict) -> None:
         data["facts"],
         dict
     ):
-
         raise ValueError(
             "facts is not a dictionary"
         )
@@ -343,14 +370,6 @@ def find_best_annual_concept(
     중요한 원칙:
     '가장 최근 filing을 가진 Concept'를 무조건 선택하지 않는다.
 
-    예:
-        OperatingIncomeLoss
-        vs
-        NonoperatingIncomeExpense
-
-    후자가 더 최근 filing을 가지고 있어도
-    operating_income으로 선택하면 안 된다.
-
     따라서 concept_candidates의 순서를
     경제적 의미의 우선순위로 사용한다.
     """
@@ -398,15 +417,6 @@ def find_best_instant_concept(
 
     """
     Instant metric도 Concept 우선순위를 따른다.
-
-    예:
-        shares_outstanding
-
-        1. dei:EntityCommonStockSharesOutstanding
-        2. us-gaap:CommonStockSharesOutstanding
-
-    WeightedAverageNumberOfDilutedSharesOutstanding는
-    현재 시점 shares outstanding의 후보로 사용하지 않는다.
     """
 
     for concept_name in concept_candidates:
@@ -484,50 +494,18 @@ def build_metric_result(
     return {
         "metric": metric_name,
         "status": "OK",
-
         "namespace": namespace,
-
         "concept": concept,
-
-        "unit": observation.get(
-            "unit"
-        ),
-
-        "value": observation.get(
-            "val"
-        ),
-
-        "period_start": observation.get(
-            "start"
-        ),
-
-        "period_end": observation.get(
-            "end"
-        ),
-
-        "filing_date": observation.get(
-            "filed"
-        ),
-
-        "form": observation.get(
-            "form"
-        ),
-
-        "fy": observation.get(
-            "fy"
-        ),
-
-        "fp": observation.get(
-            "fp"
-        ),
-
-        "frame": observation.get(
-            "frame"
-        ),
-
-        "accession": observation.get(
-            "accn"
-        ),
+        "unit": observation.get("unit"),
+        "value": observation.get("val"),
+        "period_start": observation.get("start"),
+        "period_end": observation.get("end"),
+        "filing_date": observation.get("filed"),
+        "form": observation.get("form"),
+        "fy": observation.get("fy"),
+        "fp": observation.get("fp"),
+        "frame": observation.get("frame"),
+        "accession": observation.get("accn"),
     }
 
 
@@ -541,46 +519,17 @@ def build_instant_result(
     return {
         "metric": metric_name,
         "status": "OK",
-
         "namespace": namespace,
-
         "concept": concept,
-
-        "unit": observation.get(
-            "unit"
-        ),
-
-        "value": observation.get(
-            "val"
-        ),
-
-        "period_end": observation.get(
-            "end"
-        ),
-
-        "filing_date": observation.get(
-            "filed"
-        ),
-
-        "form": observation.get(
-            "form"
-        ),
-
-        "fy": observation.get(
-            "fy"
-        ),
-
-        "fp": observation.get(
-            "fp"
-        ),
-
-        "frame": observation.get(
-            "frame"
-        ),
-
-        "accession": observation.get(
-            "accn"
-        ),
+        "unit": observation.get("unit"),
+        "value": observation.get("val"),
+        "period_end": observation.get("end"),
+        "filing_date": observation.get("filed"),
+        "form": observation.get("form"),
+        "fy": observation.get("fy"),
+        "fp": observation.get("fp"),
+        "frame": observation.get("frame"),
+        "accession": observation.get("accn"),
     }
 
 
@@ -687,7 +636,6 @@ def normalize_company(
 
     print("=" * 70)
 
-
     # ========================================================
     # REVENUE
     # ========================================================
@@ -695,14 +643,12 @@ def normalize_company(
     revenue = extract_metric(
         data,
         "revenue",
-
         [
             "RevenueFromContractWithCustomerExcludingAssessedTax",
             "SalesRevenueNet",
             "Revenues",
         ],
     )
-
 
     # ========================================================
     # NET INCOME
@@ -711,13 +657,11 @@ def normalize_company(
     net_income = extract_metric(
         data,
         "net_income",
-
         [
             "NetIncomeLoss",
             "ProfitLoss",
         ],
     )
-
 
     # ========================================================
     # DILUTED EPS
@@ -726,12 +670,10 @@ def normalize_company(
     diluted_eps = extract_metric(
         data,
         "diluted_eps",
-
         [
             "EarningsPerShareDiluted",
         ],
     )
-
 
     # ========================================================
     # OPERATING INCOME
@@ -751,12 +693,10 @@ def normalize_company(
         operating_income = extract_metric(
             data,
             "operating_income",
-
             [
                 "OperatingIncomeLoss",
             ],
         )
-
 
     # ========================================================
     # CFO
@@ -774,12 +714,10 @@ def normalize_company(
         cfo = extract_metric(
             data,
             "cfo",
-
             [
                 "NetCashProvidedByUsedInOperatingActivities",
             ],
         )
-
 
     # ========================================================
     # CAPEX
@@ -797,13 +735,11 @@ def normalize_company(
         capex = extract_metric(
             data,
             "capex",
-
             [
                 "PaymentsToAcquirePropertyPlantAndEquipment",
                 "PaymentsToAcquireOtherPropertyPlantAndEquipment",
             ],
         )
-
 
     # ========================================================
     # CASH
@@ -812,12 +748,10 @@ def normalize_company(
     cash = extract_instant_metric(
         data,
         "cash",
-
         [
             "CashAndCashEquivalentsAtCarryingValue",
         ],
     )
-
 
     # ========================================================
     # CURRENT DEBT
@@ -835,7 +769,6 @@ def normalize_company(
         current_debt = extract_instant_metric(
             data,
             "current_debt",
-
             [
                 "LongTermDebtCurrent",
                 "ShortTermBorrowings",
@@ -843,7 +776,6 @@ def normalize_company(
                 "CurrentDebt",
             ],
         )
-
 
     # ========================================================
     # NONCURRENT DEBT
@@ -861,12 +793,10 @@ def normalize_company(
         noncurrent_debt = extract_instant_metric(
             data,
             "noncurrent_debt",
-
             [
                 "LongTermDebtNoncurrent",
             ],
         )
-
 
     # ========================================================
     # SHARES OUTSTANDING
@@ -875,18 +805,15 @@ def normalize_company(
     shares = extract_instant_metric(
         data,
         "shares_outstanding",
-
         [
             "EntityCommonStockSharesOutstanding",
             "CommonStockSharesOutstanding",
         ],
-
         namespaces=(
             "dei",
             "us-gaap",
         ),
     )
-
 
     # ========================================================
     # TOTAL DEBT
@@ -896,16 +823,12 @@ def normalize_company(
 
         total_debt = {
             "metric": "total_debt",
-
             "status": "NOT_APPLICABLE",
-
             "value": None,
-
             "reason": (
                 "Generic EV debt calculation is not "
                 "appropriate for financial companies."
             ),
-
             "components": {
                 "current_debt": current_debt,
                 "noncurrent_debt": noncurrent_debt,
@@ -916,11 +839,8 @@ def normalize_company(
 
         total_debt = {
             "metric": "total_debt",
-
             "status": "INCOMPLETE",
-
             "value": None,
-
             "components": {
                 "current_debt": current_debt,
                 "noncurrent_debt": noncurrent_debt,
@@ -964,7 +884,6 @@ def normalize_company(
             total_debt["status"] = (
                 "INCOMPLETE"
             )
-
 
     # ========================================================
     # RESULT
@@ -1049,7 +968,6 @@ def validate_normalized_data(
 
     failures = []
 
-
     # ========================================================
     # CORE METRICS
     # ========================================================
@@ -1073,6 +991,7 @@ def validate_normalized_data(
             "cash",
 
             "shares_outstanding",
+
         ]
 
     else:
@@ -1088,8 +1007,8 @@ def validate_normalized_data(
             "cash",
 
             "shares_outstanding",
-        ]
 
+        ]
 
     # ========================================================
     # VALIDATE CORE
@@ -1122,7 +1041,6 @@ def validate_normalized_data(
             failures.append(
                 metric
             )
-
 
     # ========================================================
     # TOTAL DEBT
@@ -1174,7 +1092,6 @@ def validate_normalized_data(
                 "total_debt"
             )
 
-
     # ========================================================
     # FAILURE SUMMARY
     # ========================================================
@@ -1182,6 +1099,7 @@ def validate_normalized_data(
     if failures:
 
         print()
+
         print(
             f"[WARN] {ticker} "
             f"validation issues: "
@@ -1191,6 +1109,7 @@ def validate_normalized_data(
     else:
 
         print()
+
         print(
             f"[PASS] {ticker} "
             f"validation complete."
@@ -1248,13 +1167,11 @@ def main():
         TICKERS
     )
 
-
     print(
         "=== SEC Company Facts Test ==="
     )
 
     print()
-
 
     for ticker, config in TICKERS.items():
 
@@ -1263,7 +1180,6 @@ def main():
         company_type = config[
             "company_type"
         ]
-
 
         print(
             f"Ticker: {ticker}"
@@ -1278,17 +1194,14 @@ def main():
             f"{company_type}"
         )
 
-
         url = (
             "https://data.sec.gov/api/xbrl/"
             f"companyfacts/CIK{cik}.json"
         )
 
-
         print(
             f"URL: {url}"
         )
-
 
         try:
 
@@ -1300,7 +1213,6 @@ def main():
                 url
             )
 
-
             # =================================================
             # 2. RAW VALIDATION
             # =================================================
@@ -1308,7 +1220,6 @@ def main():
             validate_companyfacts(
                 data
             )
-
 
             # =================================================
             # 3. SAVE RAW CACHE
@@ -1330,7 +1241,6 @@ def main():
                 f"{raw_file}"
             )
 
-
             # =================================================
             # 4. NORMALIZE
             # =================================================
@@ -1341,7 +1251,6 @@ def main():
                 company_type,
             )
 
-
             # =================================================
             # 5. VALIDATE NORMALIZED DATA
             # =================================================
@@ -1351,7 +1260,6 @@ def main():
                     normalized
                 )
             )
-
 
             # =================================================
             # 6. SAVE NORMALIZED DATA
@@ -1372,7 +1280,6 @@ def main():
                 f"[PASS] Normalized data written: "
                 f"{processed_file}"
             )
-
 
             # =================================================
             # 7. SUCCESS COUNT
@@ -1395,7 +1302,6 @@ def main():
                     f"{', '.join(failures)}"
                 )
 
-
         except Exception as e:
 
             print(
@@ -1403,11 +1309,9 @@ def main():
                 f"{type(e).__name__}: {e}"
             )
 
-
         print(
             "-" * 70
         )
-
 
     # ========================================================
     # FINAL RESULT
@@ -1421,14 +1325,12 @@ def main():
         f"tickers fully normalized"
     )
 
-
     if success_count != total_count:
 
         raise RuntimeError(
             "SEC fundamental normalization "
             "test failed"
         )
-
 
     print()
 
@@ -1443,5 +1345,4 @@ def main():
 # ============================================================
 
 if __name__ == "__main__":
-
     main()
