@@ -5,16 +5,32 @@ on:
 
 jobs:
   stockholders-equity-coverage:
+
     runs-on: ubuntu-latest
 
     steps:
+
+      # ======================================================
+      # 1. CHECKOUT
+      # ======================================================
+
       - name: Checkout
         uses: actions/checkout@v4
+
+
+      # ======================================================
+      # 2. SET UP PYTHON
+      # ======================================================
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+
+
+      # ======================================================
+      # 3. INSTALL PROJECT AND TEST DEPENDENCIES
+      # ======================================================
 
       - name: Install project and test dependencies
         run: |
@@ -22,6 +38,85 @@ jobs:
           pip install -e .
           pip install pytest
 
+
+      # ======================================================
+      # 4. FETCH SEC COMPANY FACTS
+      # ======================================================
+
+      - name: Fetch SEC Company Facts
+        continue-on-error: true
+        env:
+          SEC_USER_AGENT: "invest-briefing-chatgpt/0.1 chks7788@gmail.com"
+        run: |
+          python tests/test_sec_companyfacts.py
+
+
+      # ======================================================
+      # 5. VALIDATE RAW SEC FILES
+      # ======================================================
+
+      - name: Validate SEC raw files
+        run: |
+          set -e
+
+          RAW_DIR="data/raw/sec"
+
+          TICKERS=(
+            MSFT
+            AAPL
+            NVDA
+            AVGO
+            INTC
+            MU
+            AMD
+            PLTR
+            ORCL
+            SMCI
+            CRWV
+          )
+
+          echo "Checking SEC raw files..."
+
+          missing_count=0
+
+          for ticker in "${TICKERS[@]}"; do
+
+            file="${RAW_DIR}/${ticker}_companyfacts.json"
+
+            if [ ! -f "$file" ]; then
+
+              echo "[FAIL] Missing raw file: $file"
+
+              missing_count=$((missing_count + 1))
+
+            else
+
+              echo "[PASS] Raw file exists: $file"
+
+            fi
+
+          done
+
+          echo ""
+          echo "Missing raw files: ${missing_count}"
+
+          if [ "$missing_count" -ne 0 ]; then
+
+            echo "[FAIL] SEC raw file validation failed."
+
+            exit 1
+
+          fi
+
+          echo "[PASS] All SEC raw files are available."
+
+
+      # ======================================================
+      # 6. RUN STOCKHOLDERS EQUITY COVERAGE TEST
+      # ======================================================
+
       - name: Run Stockholders Equity Coverage Test
+        env:
+          PYTHONPATH: ${{ github.workspace }}
         run: |
           pytest -q tests/test_stockholders_equity_coverage.py -s
