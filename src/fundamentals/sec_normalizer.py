@@ -29,18 +29,12 @@ def validate_companyfacts(data: dict) -> None:
     ]
 
     for key in required_keys:
-
         if key not in data:
-
             raise ValueError(
                 f"Missing required key: {key}"
             )
 
-    if not isinstance(
-        data["facts"],
-        dict,
-    ):
-
+    if not isinstance(data["facts"], dict):
         raise ValueError(
             "facts is not a dictionary"
         )
@@ -61,10 +55,7 @@ def get_all_concepts(data: dict) -> list:
 
     for namespace, namespace_data in data["facts"].items():
 
-        if not isinstance(
-            namespace_data,
-            dict,
-        ):
+        if not isinstance(namespace_data, dict):
             continue
 
         for concept_name, concept_data in namespace_data.items():
@@ -87,10 +78,7 @@ def get_observations(
     Flatten SEC concept units into observation rows.
     """
 
-    if not isinstance(
-        concept_data,
-        dict,
-    ):
+    if not isinstance(concept_data, dict):
         return []
 
     units = concept_data.get(
@@ -98,37 +86,25 @@ def get_observations(
         {},
     )
 
-    if not isinstance(
-        units,
-        dict,
-    ):
+    if not isinstance(units, dict):
         return []
 
     observations = []
 
     for unit, values in units.items():
 
-        if not isinstance(
-            values,
-            list,
-        ):
+        if not isinstance(values, list):
             continue
 
         for obs in values:
 
-            if not isinstance(
-                obs,
-                dict,
-            ):
+            if not isinstance(obs, dict):
                 continue
 
             row = dict(obs)
-
             row["unit"] = unit
 
-            observations.append(
-                row
-            )
+            observations.append(row)
 
     return observations
 
@@ -187,9 +163,7 @@ def is_annual_observation(
     if obs.get("fp") != "FY":
         return False
 
-    return is_duration_observation(
-        obs
-    )
+    return is_duration_observation(obs)
 
 
 # ============================================================
@@ -213,13 +187,42 @@ def _date_string(value):
     if value is None:
         return None
 
-    if isinstance(
-        value,
-        str,
-    ):
+    if isinstance(value, str):
         return value[:10]
 
     return str(value)[:10]
+
+
+def _observation_sort_key(
+    observation: dict,
+    concept_priority: int = 0,
+):
+    """
+    Common observation sorting key.
+
+    Ordering:
+        1. Economic period end
+        2. Filing date
+        3. Concept priority
+        4. Accession number
+
+    Dates are represented as YYYY-MM-DD strings,
+    allowing lexicographical sorting.
+    """
+
+    return (
+        _date_string(
+            observation.get("end")
+        )
+        or "",
+        _date_string(
+            observation.get("filed")
+        )
+        or "",
+        -concept_priority,
+        observation.get("accn")
+        or "",
+    )
 
 
 # ============================================================
@@ -234,7 +237,13 @@ def sort_observations(
 
     For duration metrics, filing date remains the primary
     information-availability ordering because the same
-    economic period may be reported/revised in later filings.
+    economic period may be reported or revised in later filings.
+
+    Ordering:
+        1. Filing date
+        2. Period end
+        3. Period start
+        4. Accession
     """
 
     return sorted(
@@ -265,20 +274,12 @@ def sort_instant_observations(
     """
     Sort balance-sheet / instant observations.
 
-    IMPORTANT:
-
-    For an instant metric, the economic period-end date
-    is the primary criterion.
-
-    This prevents an old balance-sheet observation that was
-    filed much later from incorrectly replacing a genuinely
-    newer balance-sheet period.
+    Economic period end is prioritized over filing date.
 
     Ordering:
-
-        1. period_end
-        2. filing_date
-        3. accession
+        1. Period end
+        2. Filing date
+        3. Accession
     """
 
     return sorted(
@@ -332,24 +333,8 @@ def select_latest_instant_observation(
     """
     Select latest valid instant observation.
 
-    IMPORTANT:
-
-    Instant metrics represent a balance-sheet state at a
-    specific period end.
-
-    Therefore period_end is more important than filing_date.
-
-    Example of the problem this avoids:
-
-        Old period:
-            end   = 2019-11-03
-            filed = 2020-06-26
-
-        New period:
-            end   = 2026-08-02
-            filed = 2026-09-03
-
-    The 2026 period must win.
+    The latest economic period end is prioritized
+    over filing date.
     """
 
     observations = get_observations(
@@ -394,10 +379,7 @@ def find_concept(
         namespace
     )
 
-    if not isinstance(
-        namespace_data,
-        dict,
-    ):
+    if not isinstance(namespace_data, dict):
         return None
 
     return namespace_data.get(
@@ -415,13 +397,24 @@ def find_best_annual_concept(
     namespaces=("us-gaap",),
 ):
     """
-    Select the first concept candidate that has
-    a valid annual observation.
+    Select the best annual observation across all
+    candidate concepts and namespaces.
 
-    Candidate order represents economic meaning priority.
+    Selection priority:
+        1. Latest filing date
+        2. Latest period end
+        3. Candidate concept priority
+        4. Accession number
+
+    This avoids blindly selecting the first concept
+    that happens to contain a valid observation.
     """
 
-    for concept_name in concept_candidates:
+    candidates = []
+
+    for concept_priority, concept_name in enumerate(
+        concept_candidates
+    ):
 
         for namespace in namespaces:
 
@@ -443,13 +436,36 @@ def find_best_annual_concept(
             if observation is None:
                 continue
 
-            return {
-                "namespace": namespace,
-                "concept": concept_name,
-                "observation": observation,
-            }
+            candidates.append(
+                {
+                    "namespace": namespace,
+                    "concept": concept_name,
+                    "observation": observation,
+                    "concept_priority": concept_priority,
+                }
+            )
 
-    return None
+    if not candidates:
+        return None
+
+    candidates.sort(
+        key=lambda item: (
+            _date_string(
+                item["observation"].get("filed")
+            )
+            or "",
+            _date_string(
+                item["observation"].get("end")
+            )
+            or "",
+            -item["concept_priority"],
+            item["observation"].get("accn")
+            or "",
+        ),
+        reverse=True,
+    )
+
+    return candidates[0]
 
 
 # ============================================================
@@ -462,16 +478,28 @@ def find_best_instant_concept(
     namespaces=("us-gaap", "dei"),
 ):
     """
-    Select the first concept candidate that has
-    a valid instant observation.
+    Select the best instant observation across all
+    candidate concepts and namespaces.
 
-    Concept priority remains explicit.
+    Selection priority:
+        1. Latest economic period end
+        2. Latest filing date
+        3. Candidate concept priority
+        4. Accession number
 
-    Once a concept is selected, the latest observation
-    is determined using period_end first, then filing_date.
+    IMPORTANT:
+        All candidate concepts are evaluated before selection.
+
+        This prevents an old observation from a high-priority
+        concept from blocking a newer observation available
+        in another candidate concept.
     """
 
-    for concept_name in concept_candidates:
+    candidates = []
+
+    for concept_priority, concept_name in enumerate(
+        concept_candidates
+    ):
 
         for namespace in namespaces:
 
@@ -493,13 +521,36 @@ def find_best_instant_concept(
             if observation is None:
                 continue
 
-            return {
-                "namespace": namespace,
-                "concept": concept_name,
-                "observation": observation,
-            }
+            candidates.append(
+                {
+                    "namespace": namespace,
+                    "concept": concept_name,
+                    "observation": observation,
+                    "concept_priority": concept_priority,
+                }
+            )
 
-    return None
+    if not candidates:
+        return None
+
+    candidates.sort(
+        key=lambda item: (
+            _date_string(
+                item["observation"].get("end")
+            )
+            or "",
+            _date_string(
+                item["observation"].get("filed")
+            )
+            or "",
+            -item["concept_priority"],
+            item["observation"].get("accn")
+            or "",
+        ),
+        reverse=True,
+    )
+
+    return candidates[0]
 
 
 # ============================================================
@@ -1148,10 +1199,6 @@ def validate_normalized_data(
             raise ValueError(
                 f"Missing normalized key: {key}"
             )
-
-    ticker = normalized[
-        "ticker"
-    ]
 
     company_type = normalized[
         "company_type"
