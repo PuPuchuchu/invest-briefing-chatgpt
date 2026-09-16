@@ -52,7 +52,7 @@ jobs:
 
 
       # ======================================================
-      # 5. VALIDATE RAW SEC FILES
+      # 5. VALIDATE SEC RAW FILES
       # ======================================================
 
       - name: Validate SEC raw files
@@ -112,7 +112,16 @@ jobs:
 
 
       # ======================================================
-      # 6. RUN STOCKHOLDERS EQUITY COVERAGE TEST
+      # 6. RUN AVGO STOCKHOLDERS EQUITY DIAGNOSTIC
+      # ======================================================
+
+      - name: Run AVGO Stockholders Equity Diagnostic
+        run: |
+          python tests/test_avgo_stockholders_equity_diagnostic.py
+
+
+      # ======================================================
+      # 7. RUN STOCKHOLDERS EQUITY COVERAGE TEST
       # ======================================================
 
       - name: Run Stockholders Equity Coverage Test
