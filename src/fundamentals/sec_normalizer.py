@@ -10,7 +10,7 @@ from pathlib import Path
 RAW_DIR = Path("data/raw/sec")
 PROCESSED_DIR = Path("data/processed/fundamentals")
 
-SCHEMA_VERSION = "sec_fundamentals_v0.1"
+SCHEMA_VERSION = "sec_fundamentals_v0.2"
 
 
 # ============================================================
@@ -344,6 +344,46 @@ def find_best_instant_concept(
 
 
 # ============================================================
+# METRIC SEMANTICS
+# ============================================================
+
+def get_metric_semantics(
+    metric_name: str,
+    concept: str,
+):
+    """
+    Return semantic metadata for metrics whose accounting
+    meaning can be distinguished from the selected SEC concept.
+    """
+
+    if metric_name != "stockholders_equity":
+        return {}
+
+    if concept == "StockholdersEquity":
+        return {
+            "equity_scope": "STOCKHOLDERS_EQUITY",
+            "includes_noncontrolling_interest": False,
+            "semantic_status": "CLASSIFIED",
+        }
+
+    if (
+        concept
+        == "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest"
+    ):
+        return {
+            "equity_scope": "TOTAL_EQUITY",
+            "includes_noncontrolling_interest": True,
+            "semantic_status": "CLASSIFIED",
+        }
+
+    return {
+        "equity_scope": "UNKNOWN",
+        "includes_noncontrolling_interest": None,
+        "semantic_status": "UNCLASSIFIED",
+    }
+
+
+# ============================================================
 # RESULT BUILDERS
 # ============================================================
 
@@ -381,7 +421,7 @@ def build_metric_result(
     concept: str,
     observation: dict,
 ):
-    return {
+    result = {
         "metric": metric_name,
         "status": "OK",
         "namespace": namespace,
@@ -398,6 +438,15 @@ def build_metric_result(
         "accession": observation.get("accn"),
     }
 
+    result.update(
+        get_metric_semantics(
+            metric_name,
+            concept,
+        )
+    )
+
+    return result
+
 
 def build_instant_result(
     metric_name: str,
@@ -405,7 +454,7 @@ def build_instant_result(
     concept: str,
     observation: dict,
 ):
-    return {
+    result = {
         "metric": metric_name,
         "status": "OK",
         "namespace": namespace,
@@ -420,6 +469,15 @@ def build_instant_result(
         "frame": observation.get("frame"),
         "accession": observation.get("accn"),
     }
+
+    result.update(
+        get_metric_semantics(
+            metric_name,
+            concept,
+        )
+    )
+
+    return result
 
 
 # ============================================================
@@ -787,6 +845,20 @@ def validate_normalized_data(normalized: dict) -> list:
     elif company_type == "FINANCIAL":
         if total_debt.get("status") != "NOT_APPLICABLE":
             failures.append("total_debt")
+
+    stockholders_equity = normalized["metrics"].get(
+        "stockholders_equity"
+    )
+
+    if isinstance(stockholders_equity, dict):
+        if stockholders_equity.get("status") == "OK":
+            if (
+                "equity_scope" not in stockholders_equity
+                or "includes_noncontrolling_interest"
+                not in stockholders_equity
+                or "semantic_status" not in stockholders_equity
+            ):
+                failures.append("stockholders_equity_semantics")
 
     return failures
 
