@@ -574,7 +574,7 @@ def test_normalize_nonfinancial_company():
         "NON_FINANCIAL",
     )
 
-    assert normalized["schema_version"] == "sec_fundamentals_v0.1"
+    assert normalized["schema_version"] == "sec_fundamentals_v0.2"
     assert normalized["ticker"] == "TEST"
     assert normalized["entity_name"] == "Test Company"
     assert normalized["cik"] == "0000000000"
@@ -819,7 +819,7 @@ def test_save_normalized_data(tmp_path):
         loaded = json.load(f)
 
     assert loaded["ticker"] == "TEST"
-    assert loaded["schema_version"] == "sec_fundamentals_v0.1"
+    assert loaded["schema_version"] == "sec_fundamentals_v0.2"
     assert (
         loaded["metrics"]["stockholders_equity"]["value"]
         == 80000
