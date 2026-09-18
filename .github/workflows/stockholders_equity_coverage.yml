@@ -46,7 +46,7 @@ jobs:
       - name: Fetch SEC Company Facts
         continue-on-error: true
         env:
-          SEC_USER_AGENT: "invest-briefing-claude/0.1 chks7788@gmail.com"
+          SEC_USER_AGENT: "invest-briefing-chatgpt/0.1 chks7788@gmail.com"
         run: |
           python tests/test_sec_companyfacts.py
 

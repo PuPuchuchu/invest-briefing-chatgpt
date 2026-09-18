@@ -16,16 +16,15 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install project
+      - name: Install pytest
         run: |
           python -m pip install --upgrade pip
-          pip install -e .
           pip install pytest
 
       - name: Fetch SEC Company Facts
         continue-on-error: true
         env:
-          SEC_USER_AGENT: "invest-briefing-claude/0.1 chks7788@gmail.com"
+          SEC_USER_AGENT: "invest-briefing-chatgpt/0.1"
         run: |
           python tests/test_sec_companyfacts.py
 

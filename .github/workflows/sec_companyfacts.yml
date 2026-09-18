@@ -28,7 +28,7 @@ jobs:
       - name: Run SEC test
         continue-on-error: true
         env:
-          SEC_USER_AGENT: "invest-briefing-claude/0.1 chks7788@gmail.com"
+          SEC_USER_AGENT: "stock-master-sec-test/0.1 ..."
         run: |
           python tests/test_sec_companyfacts.py
 
