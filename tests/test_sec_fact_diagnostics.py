@@ -3,13 +3,19 @@ from pathlib import Path
 from datetime import datetime
 
 from src.sec.fetcher import fetch_json as _shared_fetch_json
+from src.sec.fetcher import get_user_agent as _get_user_agent
 
 
 # ============================================================
 # CONFIGURATION
 # ============================================================
+# Reads SEC_USER_AGENT from the environment now (matching the
+# GitHub Actions workflow that invokes this script), falling back to
+# this literal only when the env var isn't set (e.g. local ad-hoc runs).
+# Resolved once at import time via a safe default, so it cannot crash
+# pytest collection when the env var is unset.
 
-USER_AGENT = "invest-briefing-chatgpt/0.1 chks7788@gmail.com"
+USER_AGENT = _get_user_agent(default="invest-briefing-claude/0.1 chks7788@gmail.com")
 
 TICKERS = {
     "NVDA": "0001045810",

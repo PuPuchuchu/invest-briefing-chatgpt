@@ -20,7 +20,7 @@ jobs:
 
       - name: Run SEC fundamental pipeline
         env:
-          SEC_USER_AGENT: "stock-master-sec-test/0.1 chks7788@gmail.com"
+          SEC_USER_AGENT: "invest-briefing-claude/0.1 chks7788@gmail.com"
         run: |
           python tests/test_sec_fundamentals_pipeline.py
 

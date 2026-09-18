@@ -3,13 +3,20 @@ from pathlib import Path
 from datetime import datetime, timezone
 
 from src.sec.fetcher import fetch_json as _shared_fetch_json
+from src.sec.fetcher import get_user_agent as _get_user_agent
 
 
 # ============================================================
 # CONFIGURATION
 # ============================================================
+# Reads SEC_USER_AGENT from the environment now (matching the
+# GitHub Actions workflows that invoke this script), falling back to
+# this literal only when the env var isn't set (e.g. local ad-hoc runs).
+# This is resolved once at import time via a safe default, so -- unlike
+# tests/test_sec_fundamentals_pipeline.py's old behavior -- it still
+# cannot crash pytest collection when the env var is unset.
 
-USER_AGENT = "invest-briefing-chatgpt/0.1 chks7788@gmail.com"
+USER_AGENT = _get_user_agent(default="invest-briefing-claude/0.1 chks7788@gmail.com")
 
 
 # ============================================================

@@ -20,6 +20,7 @@ PROCESSED_DIR = Path("data/processed/fundamentals")
 CONCEPT_MAP = {
     "revenue": [
         ("us-gaap", "RevenueFromContractWithCustomerExcludingAssessedTax"),
+        ("us-gaap", "SalesRevenueNet"),
         ("us-gaap", "Revenues"),
     ],
     "net_income": [
