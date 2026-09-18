@@ -1,21 +1,21 @@
-import gzip
 import json
-import os
-import zlib
 from pathlib import Path
-from urllib.request import Request, urlopen
+
+from src.sec.fetcher import fetch_and_cache_companyfacts, get_user_agent
 
 
 # =========================================================
 # Configuration
 # =========================================================
-
-USER_AGENT = os.environ.get("SEC_USER_AGENT")
-
-if not USER_AGENT:
-    raise RuntimeError(
-        "SEC_USER_AGENT environment variable is not set."
-    )
+# NOTE: SEC_USER_AGENT is resolved lazily inside main() via
+# get_user_agent(), not at module import time. The previous version of
+# this file called os.environ.get("SEC_USER_AGENT") and raised
+# RuntimeError right here, at module scope -- which meant a plain
+# `pytest -q` from a clean shell aborted collection for the ENTIRE test
+# suite (not just this file) with "Interrupted: 1 error during
+# collection, no tests collected", whenever the env var wasn't exported
+# first. Verified directly in this environment before this fix. See
+# src/sec/fetcher.get_user_agent() for the deferred-check rationale.
 
 
 TICKERS = {
@@ -86,73 +86,19 @@ METRIC_CANDIDATES = {
 
 
 # =========================================================
-# SEC API
-# =========================================================
-
-def fetch_json(url: str) -> dict:
-
-    request = Request(
-        url,
-        headers={
-            "User-Agent": USER_AGENT,
-            "Accept": "application/json",
-            "Accept-Encoding": "gzip, deflate",
-        },
-        method="GET",
-    )
-
-    with urlopen(request, timeout=30) as response:
-
-        status = response.status
-
-        content_encoding = (
-            response.headers.get(
-                "Content-Encoding",
-                ""
-            ).lower()
-        )
-
-        raw_data = response.read()
-
-        print(f"HTTP status: {status}")
-        print(
-            "Content-Encoding: "
-            f"{content_encoding or 'none'}"
-        )
-        print(
-            f"Response bytes: "
-            f"{len(raw_data)}"
-        )
-
-        if status != 200:
-            raise RuntimeError(
-                f"HTTP status: {status}"
-            )
-
-        if content_encoding == "gzip":
-            raw_data = gzip.decompress(raw_data)
-
-        elif content_encoding == "deflate":
-            raw_data = zlib.decompress(raw_data)
-
-        return json.loads(
-            raw_data.decode("utf-8")
-        )
-
-
-# =========================================================
 # Raw SEC acquisition
 # =========================================================
+# fetch_json() / the HTTP + gzip/deflate handling previously duplicated
+# here now lives in src/sec/fetcher.py (see module docstring there for
+# why). This function keeps the same console output shape and the same
+# required-key validation the original had; it just delegates the actual
+# network call and raw-cache write to the shared module.
 
 def download_companyfacts(
     ticker: str,
-    cik: str
+    cik: str,
+    user_agent: str,
 ) -> dict:
-
-    url = (
-        "https://data.sec.gov/api/xbrl/"
-        f"companyfacts/CIK{cik}.json"
-    )
 
     print()
     print("=" * 70)
@@ -160,46 +106,11 @@ def download_companyfacts(
     print(f"CIK: {cik}")
     print("=" * 70)
 
-    data = fetch_json(url)
-
-    required_keys = [
-        "cik",
-        "entityName",
-        "facts",
-    ]
-
-    for key in required_keys:
-
-        if key not in data:
-            raise ValueError(
-                f"{ticker}: missing key '{key}'"
-            )
-
-    RAW_DIR.mkdir(
-        parents=True,
-        exist_ok=True
-    )
-
-    raw_file = (
-        RAW_DIR /
-        f"{ticker}_companyfacts.json"
-    )
-
-    with raw_file.open(
-        "w",
-        encoding="utf-8"
-    ) as f:
-
-        json.dump(
-            data,
-            f,
-            ensure_ascii=False,
-            indent=2
-        )
-
-    print(
-        f"[PASS] Raw cache written: "
-        f"{raw_file}"
+    data, _raw_file = fetch_and_cache_companyfacts(
+        ticker=ticker,
+        cik=cik,
+        raw_dir=RAW_DIR,
+        user_agent=user_agent,
     )
 
     return data
@@ -429,6 +340,11 @@ def main():
         exist_ok=True
     )
 
+    # Resolved here, not at import time -- see the Configuration note
+    # above main() will fail fast with a clear error if SEC_USER_AGENT
+    # is unset, but only once main() actually runs, not on collection.
+    user_agent = get_user_agent()
+
     pipeline_results = {}
 
     api_success = 0
@@ -440,7 +356,8 @@ def main():
 
             data = download_companyfacts(
                 ticker,
-                cik
+                cik,
+                user_agent,
             )
 
             api_success += 1
